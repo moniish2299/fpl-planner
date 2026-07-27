@@ -12,6 +12,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Optional: set `ANTHROPIC_API_KEY` to also pull the World Cup fatigue and
+preseason "nailed on" signals (see below) - `fetch` skips both cleanly if
+it's not set, everything else works either way.
+
 ## Usage
 
 Fetch the latest data (players, teams, fixtures, Understat stats):
@@ -47,6 +51,16 @@ Fetched data is cached as JSON under `data/`:
 
 These files are gitignored since they're just a local cache — re-run
 `fetch` to refresh them.
+
+If `ANTHROPIC_API_KEY` is set, `fetch` also produces:
+
+- `worldcup.json` — minutes played in the World Cup Final/Semis/Third-place
+  match, for the World Cup fatigue signal
+- `preseason.json` — per-club preseason friendly appearances/minutes, for
+  the "nailed on starter" signal
+
+See **World Cup fatigue & preseason signals** below for what these do and
+their real limitations - it's the least reliable part of this tool.
 
 ### Analysis commands
 
@@ -96,6 +110,43 @@ rule-of-thumb until then.
 python -m fpl_planner.cli chips --team-id 1234567
 ```
 
+### World Cup fatigue & preseason signals
+
+`draft`/`transfers`/`captain` output flags players with `[WC:<minutes>min]`
+and/or `[preseason:<pct>%]` when data is available - these feed into the
+score itself (not just the label), so a heavily flagged player scores lower
+without you having to notice the flag yourself.
+
+- **World Cup fatigue**: players who featured in the Final, both Semis, or
+  the Third-place match (i.e. the least recovery time before preseason) get
+  a score penalty that's largest at GW1 and fades to nothing by GW6.
+  Sourced by finding those match articles from the Wikipedia World Cup page
+  and asking an LLM to extract lineups/minutes from them, since there's no
+  structured API for this.
+- **Preseason "nailed on" signal**: blends each player's share of their
+  club's preseason friendly minutes into the existing minutes-based score
+  component (last season's minutes alone otherwise). Sourced the same way -
+  finding a club's friendly match report links and extracting lineups via
+  an LLM - because official match reports are prose news articles with no
+  consistent structure across clubs, and neither Transfermarkt's schedule
+  pages nor FBref/WhoScored (blocked in the sandbox this was built in, at
+  least) turned out to carry this data.
+
+**Real limitations, worth knowing before trusting these:**
+- Man City and Man Utd's official sites block scraping outright (403) -
+  they're simply missing from `preseason.json`, not zero-filled.
+- Preseason friendlies are still being played into mid-August, so this data
+  is necessarily incomplete until close to GW1 - re-run `fetch` periodically.
+- LLM extraction from prose is best-effort, not exact - "minutes_estimate"
+  is the model's read of the article, not an official stat.
+- Player-name matching against FPL's roster is heuristic (see
+  `analysis/player_match.py`); preseason matching is scoped to each club's
+  own squad (low false-positive risk), but World Cup matching is global
+  (nationality doesn't map to a club), so it's the shakier of the two.
+- Each `fetch` run makes on the order of dozens of LLM calls (1-2 per club
+  for preseason, a handful for World Cup) - cheap on a small model, but not
+  free, and it add real wall-clock time to `fetch`.
+
 ## Data sources
 
 - [Official FPL API](https://fantasy.premierleague.com/api/) — no auth
@@ -105,6 +156,11 @@ python -m fpl_planner.cli chips --team-id 1234567
   `getLeagueData` JSON endpoint. Used specifically for team-level xG/xGA
   (home/away split) to build the custom FDR, since FPL's own team strength
   fields aren't populated until the season is under way.
+- Official club websites (fixtures/results pages) and
+  [Wikipedia](https://en.wikipedia.org/wiki/2026_FIFA_World_Cup) — no
+  structured API for either preseason friendlies or World Cup lineups, so
+  these are fetched as plain pages and parsed with an LLM call rather than
+  scraped with fixed selectors. See the signals section above for caveats.
 
 ## Next steps
 

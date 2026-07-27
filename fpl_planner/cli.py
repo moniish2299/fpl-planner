@@ -7,8 +7,8 @@ from fpl_planner.analysis import draft as draft_module
 from fpl_planner.analysis import fdr as fdr_module
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
-from fpl_planner.config import get_team_id, get_understat_season
-from fpl_planner.fetch import fpl_api, understat
+from fpl_planner.config import get_anthropic_api_key, get_team_id, get_understat_season, get_world_cup_year
+from fpl_planner.fetch import fpl_api, preseason, understat, worldcup
 from fpl_planner.storage import load_json, save_json
 
 
@@ -33,6 +33,31 @@ def fetch(team_id=None, understat_season=None):
         print(f"  saved {len(league_data['players'])} players, {len(league_data['teams'])} teams")
     except Exception as exc:
         print(f"  skipped Understat fetch: {exc}", file=sys.stderr)
+
+    if get_anthropic_api_key():
+        wc_year = get_world_cup_year()
+        print(f"Fetching World Cup fatigue data ({wc_year}, LLM-assisted)...")
+        try:
+            wc_data = worldcup.get_world_cup_minutes(wc_year)
+            save_json("worldcup", wc_data)
+            print(f"  saved minutes for {len(wc_data)} World Cup players")
+        except Exception as exc:
+            print(f"  skipped World Cup fetch: {exc}", file=sys.stderr)
+
+        print(f"Fetching preseason friendly lineups (LLM-assisted, {len(preseason.CLUB_SITES)} clubs)...")
+        preseason_data = {}
+        for club_name in preseason.CLUB_SITES:
+            try:
+                appearances, matches_covered = preseason.get_club_preseason_appearances(club_name)
+                preseason_data[club_name] = {"appearances": appearances, "matches_covered": matches_covered}
+            except Exception as exc:
+                print(f"  skipped {club_name}: {exc}", file=sys.stderr)
+        save_json("preseason", preseason_data)
+        covered = sum(1 for d in preseason_data.values() if d.get("matches_covered"))
+        print(f"  saved preseason data for {covered}/{len(preseason.CLUB_SITES)} clubs")
+    else:
+        print("No ANTHROPIC_API_KEY set, skipping World Cup fatigue + preseason lineup data "
+              "(these extract structured data out of prose match reports via an LLM call).")
 
     team_id = team_id or get_team_id()
     if team_id:
@@ -63,6 +88,13 @@ def fetch(team_id=None, understat_season=None):
               "Set the FPL_TEAM_ID env var or pass --team-id to fetch it.")
 
 
+def _load_optional_json(name):
+    try:
+        return load_json(name)
+    except FileNotFoundError:
+        return None
+
+
 def _load_cached_data():
     try:
         bootstrap = load_json("bootstrap")
@@ -72,6 +104,12 @@ def _load_cached_data():
         print("No cached data found. Run `python -m fpl_planner.cli fetch` first.", file=sys.stderr)
         sys.exit(1)
     return bootstrap, fixtures, understat_teams
+
+
+def _load_signal_data():
+    """World Cup fatigue / preseason data are optional (need ANTHROPIC_API_KEY
+    at fetch time) - score_players() treats missing data as no adjustment."""
+    return _load_optional_json("preseason"), _load_optional_json("worldcup")
 
 
 def _current_or_next_event(bootstrap):
@@ -117,11 +155,22 @@ def cmd_fdr(args):
               f"({v['fixtures']} fixtures)")
 
 
+def _signal_flags(p):
+    flags = []
+    if p.get("world_cup_minutes"):
+        flags.append(f"WC:{p['world_cup_minutes']:.0f}min")
+    if p.get("preseason_fraction") is not None:
+        flags.append(f"preseason:{p['preseason_fraction']*100:.0f}%")
+    return f" [{', '.join(flags)}]" if flags else ""
+
+
 def cmd_draft(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
+    preseason_data, world_cup_data = _load_signal_data()
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
-        bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event
+        bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
+        preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     result = draft_module.build_squad(players, budget=args.budget)
 
@@ -131,11 +180,12 @@ def cmd_draft(args):
         tag = " (C)" if p["id"] == result["captain"]["id"] else (" (V)" if p["id"] == result["vice_captain"]["id"] else "")
         bench = "" if p in result["starting_xi"] else " [BENCH]"
         print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
-              f"score={p['score']:.1f}{tag}{bench}")
+              f"score={p['score']:.1f}{tag}{bench}{_signal_flags(p)}")
 
 
 def cmd_transfers(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
+    preseason_data, world_cup_data = _load_signal_data()
     team_id = args.team_id or get_team_id()
     if not team_id:
         print("Provide --team-id or set FPL_TEAM_ID.", file=sys.stderr)
@@ -144,7 +194,8 @@ def cmd_transfers(args):
 
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
-        bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event
+        bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
+        preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     suggestions = transfers_module.suggest_transfers(
         players, squad_ids, bank, free_transfers=args.free_transfers, max_suggestions=args.max_suggestions
@@ -159,11 +210,12 @@ def cmd_transfers(args):
         hit_note = "FREE" if s["within_free_transfers"] else ("worth a hit" if s["worth_a_hit"] else "not worth a hit")
         print(f"  OUT {s['out']['web_name']:16s} ({s['out']['score']:.1f}) -> "
               f"IN {s['in']['web_name']:16s} ({s['in']['score']:.1f})  "
-              f"gain={s['gain']:+.1f}  cost_delta=£{s['cost_delta']:+.1f}m  [{hit_note}]")
+              f"gain={s['gain']:+.1f}  cost_delta=£{s['cost_delta']:+.1f}m  [{hit_note}]{_signal_flags(s['in'])}")
 
 
 def cmd_captain(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
+    preseason_data, world_cup_data = _load_signal_data()
     team_id = args.team_id or get_team_id()
     if not team_id:
         print("Provide --team-id or set FPL_TEAM_ID.", file=sys.stderr)
@@ -172,7 +224,8 @@ def cmd_captain(args):
 
     target_gw = args.gameweek or _current_or_next_event(bootstrap)
     players = player_value.score_players(
-        bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw
+        bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw,
+        preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     result = captain_module.recommend_captain(players, squad_ids, fixtures, target_gw)
 
@@ -185,7 +238,7 @@ def cmd_captain(args):
             " (V)" if result["vice_captain"] and c["id"] == result["vice_captain"]["id"] else "")
         dgw = " [DGW]" if c["gameweek_fixtures"] > 1 else ""
         print(f"  {c['web_name']:16s} {c['team']:15s} score={c['score']:.1f}  "
-              f"adjusted={c['adjusted_score']:.1f}{dgw}{tag}")
+              f"adjusted={c['adjusted_score']:.1f}{dgw}{tag}{_signal_flags(c)}")
 
 
 def cmd_chips(args):
