@@ -12,9 +12,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Optional: set `ANTHROPIC_API_KEY` to also pull the World Cup fatigue and
+Optional: set an LLM API key to also pull the World Cup fatigue and
 preseason "nailed on" signals (see below) - `fetch` skips both cleanly if
-it's not set, everything else works either way.
+one isn't set, everything else works either way.
+
+The default provider is Gemini (has a free tier, good enough for this kind
+of simple extraction):
+
+```bash
+export GEMINI_API_KEY=...
+```
+
+To use Anthropic instead:
+
+```bash
+export FPL_PLANNER_LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=...
+```
+
+`FPL_PLANNER_LLM_API_KEY` also works as a provider-agnostic override, and
+`FPL_PLANNER_LLM_MODEL` overrides the model for whichever provider is
+selected (defaults: `gemini-2.5-flash-lite` / `claude-haiku-4-5-20251001`).
 
 ## Usage
 
@@ -52,7 +70,7 @@ Fetched data is cached as JSON under `data/`:
 These files are gitignored since they're just a local cache — re-run
 `fetch` to refresh them.
 
-If `ANTHROPIC_API_KEY` is set, `fetch` also produces:
+If an LLM API key is set (see Setup above), `fetch` also produces:
 
 - `worldcup.json` — minutes played in the World Cup Final/Semis/Third-place
   match, for the World Cup fatigue signal

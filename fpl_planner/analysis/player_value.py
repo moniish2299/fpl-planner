@@ -155,7 +155,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
     """Full pipeline: team strength -> fixture ratings -> upcoming FDR ->
     per-player composite score/value. Returns a list of player dicts sorted
     by score descending. `preseason_data`/`world_cup_data` are optional -
-    both fall back to no adjustment when not supplied (e.g. no ANTHROPIC_API_KEY
+    both fall back to no adjustment when not supplied (e.g. no LLM API key
     configured for the LLM-assisted fetch that produces them).
     """
     strength = build_team_strength(bootstrap, understat_teams)

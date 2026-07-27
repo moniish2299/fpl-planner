@@ -7,7 +7,7 @@ from fpl_planner.analysis import draft as draft_module
 from fpl_planner.analysis import fdr as fdr_module
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
-from fpl_planner.config import get_anthropic_api_key, get_team_id, get_understat_season, get_world_cup_year
+from fpl_planner.config import LLM_PROVIDER, get_llm_api_key, get_team_id, get_understat_season, get_world_cup_year
 from fpl_planner.fetch import fpl_api, preseason, understat, worldcup
 from fpl_planner.storage import load_json, save_json
 
@@ -34,9 +34,9 @@ def fetch(team_id=None, understat_season=None):
     except Exception as exc:
         print(f"  skipped Understat fetch: {exc}", file=sys.stderr)
 
-    if get_anthropic_api_key():
+    if get_llm_api_key():
         wc_year = get_world_cup_year()
-        print(f"Fetching World Cup fatigue data ({wc_year}, LLM-assisted)...")
+        print(f"Fetching World Cup fatigue data ({wc_year}, LLM-assisted via {LLM_PROVIDER})...")
         try:
             wc_data = worldcup.get_world_cup_minutes(wc_year)
             save_json("worldcup", wc_data)
@@ -56,8 +56,10 @@ def fetch(team_id=None, understat_season=None):
         covered = sum(1 for d in preseason_data.values() if d.get("matches_covered"))
         print(f"  saved preseason data for {covered}/{len(preseason.CLUB_SITES)} clubs")
     else:
-        print("No ANTHROPIC_API_KEY set, skipping World Cup fatigue + preseason lineup data "
-              "(these extract structured data out of prose match reports via an LLM call).")
+        print(f"No API key set for LLM provider '{LLM_PROVIDER}' (set GEMINI_API_KEY, ANTHROPIC_API_KEY if "
+              "using FPL_PLANNER_LLM_PROVIDER=anthropic, or FPL_PLANNER_LLM_API_KEY), skipping World Cup "
+              "fatigue + preseason lineup data (these extract structured data out of prose match reports "
+              "via an LLM call).")
 
     team_id = team_id or get_team_id()
     if team_id:
@@ -107,7 +109,7 @@ def _load_cached_data():
 
 
 def _load_signal_data():
-    """World Cup fatigue / preseason data are optional (need ANTHROPIC_API_KEY
+    """World Cup fatigue / preseason data are optional (need an LLM API key
     at fetch time) - score_players() treats missing data as no adjustment."""
     return _load_optional_json("preseason"), _load_optional_json("worldcup")
 

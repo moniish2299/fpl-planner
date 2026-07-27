@@ -2,12 +2,13 @@ import json
 
 import requests
 
-from fpl_planner.config import LLM_MODEL, USER_AGENT, get_anthropic_api_key
+from fpl_planner.config import LLM_MODEL, LLM_PROVIDER, USER_AGENT, get_llm_api_key
 
 
 class LLMUnavailable(Exception):
-    """Raised when no ANTHROPIC_API_KEY is configured; callers should catch
-    this and skip the LLM-dependent signal rather than fail the whole fetch."""
+    """Raised when no API key is configured for the selected provider;
+    callers should catch this and skip the LLM-dependent signal rather than
+    fail the whole fetch."""
 
 
 def fetch_page_text(url, max_chars=15000):
@@ -19,19 +20,47 @@ def fetch_page_text(url, max_chars=15000):
     return response.text[:max_chars]
 
 
-def extract_json(prompt, page_text, schema_hint):
-    """Ask the configured model to pull structured data out of prose/HTML
-    that has no reliable regex/CSS-selector pattern (match reports, squad
-    write-ups). Returns parsed JSON matching `schema_hint`'s shape, or raises
-    LLMUnavailable if no API key is configured.
-    """
-    api_key = get_anthropic_api_key()
-    if not api_key:
-        raise LLMUnavailable("ANTHROPIC_API_KEY is not set")
+def _call_gemini(api_key, full_prompt):
+    from google import genai
 
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(model=LLM_MODEL, contents=full_prompt)
+    return (response.text or "").strip()
+
+
+def _call_anthropic(api_key, full_prompt):
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=LLM_MODEL,
+        max_tokens=2000,
+        messages=[{"role": "user", "content": full_prompt}],
+    )
+    return "".join(block.text for block in message.content if block.type == "text").strip()
+
+
+_PROVIDER_CALLERS = {
+    "gemini": _call_gemini,
+    "anthropic": _call_anthropic,
+}
+
+
+def extract_json(prompt, page_text, schema_hint):
+    """Ask the configured model (FPL_PLANNER_LLM_PROVIDER, default "gemini")
+    to pull structured data out of prose/HTML that has no reliable
+    regex/CSS-selector pattern (match reports, squad write-ups). Returns
+    parsed JSON matching `schema_hint`'s shape, or raises LLMUnavailable if
+    no API key is configured for that provider.
+    """
+    api_key = get_llm_api_key()
+    if not api_key:
+        raise LLMUnavailable(f"No API key set for LLM provider '{LLM_PROVIDER}'")
+
+    caller = _PROVIDER_CALLERS.get(LLM_PROVIDER)
+    if caller is None:
+        raise LLMUnavailable(f"Unknown LLM provider '{LLM_PROVIDER}'")
+
     full_prompt = (
         f"{prompt}\n\n"
         f"Respond with ONLY a JSON value matching this shape (no prose, no markdown fences): "
@@ -39,12 +68,7 @@ def extract_json(prompt, page_text, schema_hint):
         f"If nothing relevant is found, respond with an empty list/object matching that shape.\n\n"
         f"--- PAGE CONTENT ---\n{page_text}"
     )
-    message = client.messages.create(
-        model=LLM_MODEL,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": full_prompt}],
-    )
-    text = "".join(block.text for block in message.content if block.type == "text").strip()
+    text = caller(api_key, full_prompt)
     if text.startswith("```"):
         text = text.strip("`")
         if text.startswith("json"):
