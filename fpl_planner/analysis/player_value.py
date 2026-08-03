@@ -70,6 +70,19 @@ def _world_cup_fatigue_multiplier(wc_minutes, from_event):
     return 1 - base_penalty * fade
 
 
+def _as_minutes(value):
+    """preseason.json/worldcup.json are LLM-extracted and loaded from disk -
+    treat minutes_estimate as untrusted external input even though the
+    extractor is supposed to coerce it to a number, since a cache file
+    written before that fix (or hand-edited) could still hold a string."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _preseason_fractions(elements, teams_by_id, preseason_data):
     """preseason_data: {team_name: {"appearances": [{"name", "minutes_estimate"}],
     "matches_covered": int}}, as cached by fetch/preseason.py. Matching is
@@ -92,7 +105,7 @@ def _preseason_fractions(elements, teams_by_id, preseason_data):
         matched, _unmatched = player_match.match_all(candidates, data.get("appearances", []))
         totals = {}
         for entry, candidate in matched:
-            totals[candidate["id"]] = totals.get(candidate["id"], 0) + (entry.get("minutes_estimate") or 0)
+            totals[candidate["id"]] = totals.get(candidate["id"], 0) + _as_minutes(entry.get("minutes_estimate"))
         available_minutes = matches_covered * 90
         for pid, minutes in totals.items():
             fractions[pid] = min(1.0, minutes / available_minutes)
@@ -109,7 +122,7 @@ def _world_cup_minutes_by_player(elements, world_cup_data):
     matched, _unmatched = player_match.match_all(elements, world_cup_data, min_score=1.5)
     minutes = {}
     for entry, candidate in matched:
-        minutes[candidate["id"]] = max(minutes.get(candidate["id"], 0), entry.get("minutes_estimate") or 0)
+        minutes[candidate["id"]] = max(minutes.get(candidate["id"], 0), _as_minutes(entry.get("minutes_estimate")))
     return minutes
 
 

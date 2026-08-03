@@ -95,12 +95,55 @@ _PROVIDER_CALLERS = {
 }
 
 
+def _default_for_schema(schema):
+    if schema == "number":
+        return 0
+    if schema == "string":
+        return ""
+    if isinstance(schema, list):
+        return []
+    if isinstance(schema, dict):
+        return {k: _default_for_schema(v) for k, v in schema.items()}
+    return None
+
+
+def _coerce_to_schema(value, schema):
+    """Models don't reliably honor a schema's declared types - e.g. Gemini
+    returning "90" instead of 90 for a "number" field is enough to crash any
+    caller that does arithmetic on it. Coercing the parsed JSON to match
+    schema_hint's actual types here means every caller can trust the shape
+    it asked for, instead of each one needing its own defensive casts."""
+    if schema == "number":
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, (int, float)):
+            return value
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0
+    if schema == "string":
+        if value is None:
+            return ""
+        return value if isinstance(value, str) else str(value)
+    if isinstance(schema, list):
+        item_schema = schema[0] if schema else None
+        if not isinstance(value, list):
+            return []
+        return [_coerce_to_schema(v, item_schema) for v in value]
+    if isinstance(schema, dict):
+        if not isinstance(value, dict):
+            return _default_for_schema(schema)
+        return {k: _coerce_to_schema(value.get(k), v) for k, v in schema.items()}
+    return value
+
+
 def extract_json(prompt, page_text, schema_hint):
     """Ask the configured model (FPL_PLANNER_LLM_PROVIDER, default "gemini")
     to pull structured data out of prose/HTML that has no reliable
     regex/CSS-selector pattern (match reports, squad write-ups). Returns
-    parsed JSON matching `schema_hint`'s shape, or raises LLMUnavailable if
-    no API key is configured for that provider.
+    parsed JSON coerced to `schema_hint`'s shape/types, or raises
+    LLMUnavailable if no API key is configured for that provider.
     """
     api_key = get_llm_api_key()
     if not api_key:
@@ -122,4 +165,5 @@ def extract_json(prompt, page_text, schema_hint):
         text = text.strip("`")
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text)
+    parsed = json.loads(text)
+    return _coerce_to_schema(parsed, schema_hint)
