@@ -137,22 +137,27 @@ without you having to notice the flag yourself.
 
 - **World Cup fatigue**: players who featured in the Final, both Semis, or
   the Third-place match (i.e. the least recovery time before preseason) get
-  a score penalty that's largest at GW1 and fades to nothing by GW6.
-  Sourced by finding those match articles from the Wikipedia World Cup page
-  and asking an LLM to extract lineups/minutes from them, since there's no
-  structured API for this.
+  a score penalty that's largest at GW1 and fades to nothing by GW6. Sourced
+  from the main Wikipedia World Cup article directly - a tournament that
+  just finished doesn't have separate per-match Wikipedia articles yet
+  (those get split out over the following months/years), so this reads the
+  one big article in a single LLM call and asks it to focus on the relevant
+  sections.
 - **Preseason "nailed on" signal**: blends each player's share of their
   club's preseason friendly minutes into the existing minutes-based score
-  component (last season's minutes alone otherwise). Sourced the same way -
-  finding a club's friendly match report links and extracting lineups via
-  an LLM - because official match reports are prose news articles with no
-  consistent structure across clubs, and neither Transfermarkt's schedule
-  pages nor FBref/WhoScored (blocked in the sandbox this was built in, at
-  least) turned out to carry this data.
+  component (last season's minutes alone otherwise). Sourced from each
+  club's BBC Sport team page rather than the club's own site: official club
+  sites turned out to be almost entirely JavaScript SPAs (a plain HTTP GET
+  returns an empty shell - verified directly, most return under 2KB of real
+  text once script/style/svg markup is stripped), which no amount of prompt
+  tuning fixes. BBC's team pages are server-rendered, follow one consistent
+  URL per club, and already show recent friendly results with inline
+  match-report prose where BBC covered the game in writing.
 
 **Real limitations, worth knowing before trusting these:**
-- Man City and Man Utd's official sites block scraping outright (403) -
-  they're simply missing from `preseason.json`, not zero-filled.
+- Only friendlies BBC actually wrote a report on carry player-level detail -
+  a friendly that's just a bare scoreline on the page contributes to the
+  minutes denominator but no player gets credited minutes from it.
 - Preseason friendlies are still being played into mid-August, so this data
   is necessarily incomplete until close to GW1 - re-run `fetch` periodically.
 - LLM extraction from prose is best-effort, not exact - "minutes_estimate"
@@ -161,9 +166,9 @@ without you having to notice the flag yourself.
   `analysis/player_match.py`); preseason matching is scoped to each club's
   own squad (low false-positive risk), but World Cup matching is global
   (nationality doesn't map to a club), so it's the shakier of the two.
-- Each `fetch` run makes on the order of dozens of LLM calls (1-2 per club
-  for preseason, a handful for World Cup) - cheap on a small model, but not
-  free, and it add real wall-clock time to `fetch`.
+- Each `fetch` run makes one LLM call per club plus a handful for World Cup
+  (~20 total) - cheap on a small model, but not free, and it adds real
+  wall-clock time to `fetch`.
 
 ## Data sources
 
@@ -174,11 +179,12 @@ without you having to notice the flag yourself.
   `getLeagueData` JSON endpoint. Used specifically for team-level xG/xGA
   (home/away split) to build the custom FDR, since FPL's own team strength
   fields aren't populated until the season is under way.
-- Official club websites (fixtures/results pages) and
+- [BBC Sport](https://www.bbc.com/sport/football) team pages and
   [Wikipedia](https://en.wikipedia.org/wiki/2026_FIFA_World_Cup) — no
   structured API for either preseason friendlies or World Cup lineups, so
   these are fetched as plain pages and parsed with an LLM call rather than
-  scraped with fixed selectors. See the signals section above for caveats.
+  scraped with fixed selectors. See the signals section above for caveats
+  (including why BBC rather than official club sites).
 
 ## Next steps
 

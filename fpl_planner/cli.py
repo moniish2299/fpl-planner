@@ -44,9 +44,9 @@ def fetch(team_id=None, understat_season=None):
         except Exception as exc:
             print(f"  skipped World Cup fetch: {exc}", file=sys.stderr)
 
-        print(f"Fetching preseason friendly lineups (LLM-assisted, {len(preseason.CLUB_SITES)} clubs)...")
+        print(f"Fetching preseason friendly lineups (LLM-assisted, {len(preseason.BBC_SLUGS)} clubs)...")
         preseason_data = {}
-        for club_name in preseason.CLUB_SITES:
+        for club_name in preseason.BBC_SLUGS:
             try:
                 appearances, matches_covered = preseason.get_club_preseason_appearances(club_name)
                 preseason_data[club_name] = {"appearances": appearances, "matches_covered": matches_covered}
@@ -54,7 +54,7 @@ def fetch(team_id=None, understat_season=None):
                 print(f"  skipped {club_name}: {exc}", file=sys.stderr)
         save_json("preseason", preseason_data)
         covered = sum(1 for d in preseason_data.values() if d.get("matches_covered"))
-        print(f"  saved preseason data for {covered}/{len(preseason.CLUB_SITES)} clubs")
+        print(f"  saved preseason data for {covered}/{len(preseason.BBC_SLUGS)} clubs")
     else:
         print(f"No API key set for LLM provider '{LLM_PROVIDER}' (set GEMINI_API_KEY, ANTHROPIC_API_KEY if "
               "using FPL_PLANNER_LLM_PROVIDER=anthropic, or FPL_PLANNER_LLM_API_KEY), skipping World Cup "
