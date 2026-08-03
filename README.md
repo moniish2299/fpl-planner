@@ -32,7 +32,7 @@ export ANTHROPIC_API_KEY=...
 
 `FPL_PLANNER_LLM_API_KEY` also works as a provider-agnostic override, and
 `FPL_PLANNER_LLM_MODEL` overrides the model for whichever provider is
-selected (defaults: `gemini-2.5-flash-lite` / `claude-haiku-4-5-20251001`).
+selected (defaults: `gemini-3.5-flash-lite` / `claude-haiku-4-5-20251001`).
 
 ## Usage
 

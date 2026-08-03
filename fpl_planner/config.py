@@ -18,11 +18,11 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 LLM_PROVIDER = os.environ.get("FPL_PLANNER_LLM_PROVIDER", "gemini")
 
 _DEFAULT_LLM_MODELS = {
-    "gemini": "gemini-2.5-flash-lite",
+    "gemini": "gemini-3.5-flash-lite",
     "anthropic": "claude-haiku-4-5-20251001",
 }
 LLM_MODEL = os.environ.get(
-    "FPL_PLANNER_LLM_MODEL", _DEFAULT_LLM_MODELS.get(LLM_PROVIDER, "gemini-2.5-flash-lite")
+    "FPL_PLANNER_LLM_MODEL", _DEFAULT_LLM_MODELS.get(LLM_PROVIDER, "gemini-3.5-flash-lite")
 )
 
 # Per-provider env vars so switching FPL_PLANNER_LLM_PROVIDER doesn't require
