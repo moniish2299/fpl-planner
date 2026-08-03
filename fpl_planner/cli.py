@@ -108,10 +108,18 @@ def _load_cached_data():
     return bootstrap, fixtures, understat_teams
 
 
-def _load_signal_data():
+def _load_signal_data(args=None):
     """World Cup fatigue / preseason data are optional (need an LLM API key
-    at fetch time) - score_players() treats missing data as no adjustment."""
-    return _load_optional_json("preseason"), _load_optional_json("worldcup")
+    at fetch time) - score_players() treats missing data as no adjustment.
+    Either can also be force-disabled per-command via --no-world-cup/
+    --no-preseason even when the cached data is present."""
+    preseason_data = _load_optional_json("preseason")
+    world_cup_data = _load_optional_json("worldcup")
+    if args and getattr(args, "no_preseason", False):
+        preseason_data = None
+    if args and getattr(args, "no_world_cup", False):
+        world_cup_data = None
+    return preseason_data, world_cup_data
 
 
 def _current_or_next_event(bootstrap):
@@ -168,7 +176,7 @@ def _signal_flags(p):
 
 def cmd_draft(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
-    preseason_data, world_cup_data = _load_signal_data()
+    preseason_data, world_cup_data = _load_signal_data(args)
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
@@ -187,7 +195,7 @@ def cmd_draft(args):
 
 def cmd_transfers(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
-    preseason_data, world_cup_data = _load_signal_data()
+    preseason_data, world_cup_data = _load_signal_data(args)
     team_id = args.team_id or get_team_id()
     if not team_id:
         print("Provide --team-id or set FPL_TEAM_ID.", file=sys.stderr)
@@ -217,7 +225,7 @@ def cmd_transfers(args):
 
 def cmd_captain(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
-    preseason_data, world_cup_data = _load_signal_data()
+    preseason_data, world_cup_data = _load_signal_data(args)
     team_id = args.team_id or get_team_id()
     if not team_id:
         print("Provide --team-id or set FPL_TEAM_ID.", file=sys.stderr)
@@ -280,6 +288,8 @@ def main():
     draft_parser.add_argument("--budget", type=float, default=100.0, help="Total squad budget in £m")
     draft_parser.add_argument("--gameweeks", type=int, default=5, help="Fixture horizon to optimize for")
     draft_parser.add_argument("--from-event", type=int, help="Gameweek to start the fixture horizon from")
+    draft_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
+    draft_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
 
     transfers_parser = subparsers.add_parser("transfers", help="Suggest transfers for your saved squad")
     transfers_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
@@ -287,10 +297,14 @@ def main():
     transfers_parser.add_argument("--from-event", type=int, help="Gameweek to start the fixture horizon from")
     transfers_parser.add_argument("--free-transfers", type=int, default=1, help="Free transfers you have available")
     transfers_parser.add_argument("--max-suggestions", type=int, default=5)
+    transfers_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
+    transfers_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
 
     captain_parser = subparsers.add_parser("captain", help="Recommend captain/vice-captain for your saved squad")
     captain_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
     captain_parser.add_argument("--gameweek", type=int, help="Gameweek to recommend for (default: current/next)")
+    captain_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
+    captain_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
 
     chips_parser = subparsers.add_parser("chips", help="Recommend chip timing (Wildcard/Bench Boost/Triple Captain/Free Hit)")
     chips_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")

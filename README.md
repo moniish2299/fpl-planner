@@ -133,7 +133,9 @@ python -m fpl_planner.cli chips --team-id 1234567
 `draft`/`transfers`/`captain` output flags players with `[WC:<minutes>min]`
 and/or `[preseason:<pct>%]` when data is available - these feed into the
 score itself (not just the label), so a heavily flagged player scores lower
-without you having to notice the flag yourself.
+without you having to notice the flag yourself. Pass `--no-world-cup` and/or
+`--no-preseason` to either of those commands to ignore one signal (or both)
+even when the cached data is present, if you'd rather judge that yourself.
 
 - **World Cup fatigue**: players who featured in the Final, both Semis, or
   the Third-place match (i.e. the least recovery time before preseason) get
