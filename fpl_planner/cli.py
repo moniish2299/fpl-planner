@@ -182,15 +182,30 @@ def cmd_draft(args):
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
-    result = draft_module.build_squad(players, budget=args.budget)
+    # Squad selection uses the multi-GW score above (what's worth drafting
+    # over the horizon), but starting XI/bench and captain/vice should
+    # reflect GW1 specifically, not an average across the horizon - a GW1
+    # score, single gameweek from the same starting point.
+    gw1_players = player_value.score_players(
+        bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=from_event,
+        preseason_data=preseason_data, world_cup_data=world_cup_data,
+    )
+    gw1_scores = {p["id"]: p["score"] for p in gw1_players}
 
-    print(f"\nDraft squad (budget £{args.budget}m, using next {args.gameweeks} GWs from GW{from_event}):")
-    print(f"Total cost: £{result['total_cost']}m, remaining: £{result['budget_remaining']}m\n")
-    for p in result["squad"]:
-        tag = " (C)" if p["id"] == result["captain"]["id"] else (" (V)" if p["id"] == result["vice_captain"]["id"] else "")
-        bench = "" if p in result["starting_xi"] else " [BENCH]"
-        print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
-              f"score={p['score']:.1f}{tag}{bench}{_signal_flags(p)}")
+    results = draft_module.build_top_squads(players, budget=args.budget, count=5, gw1_scores=gw1_scores)
+    if not results:
+        print("No feasible squad found for that budget.", file=sys.stderr)
+        sys.exit(1)
+
+    for i, result in enumerate(results, start=1):
+        print(f"\n=== Option {i}/{len(results)} (budget £{args.budget}m, using next {args.gameweeks} GWs "
+              f"from GW{from_event}, starting XI/captain for GW{from_event}) ===")
+        print(f"Total cost: £{result['total_cost']}m, remaining: £{result['budget_remaining']}m\n")
+        for p in result["squad"]:
+            tag = " (C)" if p["id"] == result["captain"]["id"] else (" (V)" if p["id"] == result["vice_captain"]["id"] else "")
+            bench = "" if p in result["starting_xi"] else " [BENCH]"
+            print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
+                  f"score={p['score']:.1f} gw1={p['gw1_score']:.1f}{tag}{bench}{_signal_flags(p)}")
 
 
 def cmd_transfers(args):

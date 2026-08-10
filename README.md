@@ -93,10 +93,14 @@ their own, so they're assigned a relegated team's numbers as a proxy.
 python -m fpl_planner.cli fdr --gameweeks 5
 ```
 
-**Pre-GW1 draft planner** — solves for the 15-man squad (budget/position/
-max-3-per-team constraints) that maximizes a fixture-adjusted score, using
-an integer program (PuLP + the bundled CBC solver), plus a starting XI and
-captain/vice pick.
+**Pre-GW1 draft planner** — solves for the top 5 distinct 15-man squads
+(budget/position/max-3-per-team constraints) that maximize a fixture-
+adjusted score, using an integer program (PuLP + the bundled CBC solver).
+The 15 players are chosen for value across the `--gameweeks` horizon, but
+the starting XI/bench split and captain/vice pick within each squad are
+optimized separately for the single starting gameweek (`gw1=` in the
+output) - a player worth drafting for the next several weeks isn't
+necessarily who you'd start or captain in the very first one.
 
 ```bash
 python -m fpl_planner.cli draft --budget 100

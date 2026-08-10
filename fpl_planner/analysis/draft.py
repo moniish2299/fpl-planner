@@ -7,14 +7,52 @@ MAX_PER_REAL_TEAM = 3
 BENCH_WEIGHT = 0.1
 
 
-def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_ids=None):
-    """Solve for the 15-man squad (and a strong starting XI within it) that
-    maximizes score under FPL's budget/position/team constraints.
+def _select_starting_xi(squad, score_of):
+    """Pick the 11 of `squad` that maximize sum(score_of(p)) within FPL's
+    starting-XI position bounds - a small enough problem (15 players) that
+    solving it separately from the full squad-selection LP is cheap, and
+    lets the starting XI be optimized against a different score (GW1-
+    specific) than whatever picked the 15-man squad in the first place."""
+    prob = pulp.LpProblem("fpl_starting_xi", pulp.LpMaximize)
+    xi_vars = {p["id"]: pulp.LpVariable(f"xi_{p['id']}", cat="Binary") for p in squad}
 
-    `players` is the list of dicts from player_value.score_players(). Returns
-    a dict with squad, starting_xi, bench, captain, vice_captain, total_cost.
+    prob += pulp.lpSum(score_of(p) * xi_vars[p["id"]] for p in squad)
+    prob += pulp.lpSum(xi_vars.values()) == 11
+    for position, (lo, hi) in STARTING_XI_BOUNDS.items():
+        count = pulp.lpSum(xi_vars[p["id"]] for p in squad if p["position"] == position)
+        prob += count >= lo
+        prob += count <= hi
+
+    prob.solve(pulp.PULP_CBC_CMD(msg=False))
+
+    starting_ids = {pid for pid, var in xi_vars.items() if var.value() == 1}
+    starting_xi = [p for p in squad if p["id"] in starting_ids]
+    bench = [p for p in squad if p["id"] not in starting_ids]
+    return starting_xi, bench
+
+
+def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_ids=None,
+                 excluded_squads=None, gw1_scores=None):
+    """Solve for the 15-man squad that maximizes score under FPL's
+    budget/position/team constraints.
+
+    `players` is the list of dicts from player_value.score_players() - its
+    `score` field (typically averaged over a multi-gameweek horizon) drives
+    which 15 players get drafted, since that's what a squad should be built
+    around. `gw1_scores`, if given, is a separate {player_id: score} map
+    used only to pick the starting XI/bench split and captain/vice within
+    that squad - a player worth drafting for the next several GWs isn't
+    necessarily who you'd start or captain in GW1 itself, so this keeps
+    those two decisions on separate scores. `excluded_squads` is a list of
+    id-sets; each solve is barred from reproducing one exactly (see
+    `build_top_squads`), yielding distinct near-optimal squads in ranked
+    order rather than the same one every time.
+
+    Returns None if no feasible squad remains (e.g. all reasonable
+    combinations have already been excluded).
     """
     excluded_ids = excluded_ids or set()
+    excluded_squads = excluded_squads or []
     pool = [p for p in players if p["id"] not in excluded_ids and p["status"] != "u"]
 
     prob = pulp.LpProblem("fpl_draft", pulp.LpMaximize)
@@ -45,20 +83,36 @@ def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_
     for team_id in team_ids:
         prob += pulp.lpSum(squad_vars[p["id"]] for p in pool if p["team_id"] == team_id) <= max_per_team
 
+    for combo in excluded_squads:
+        combo_in_pool = [pid for pid in combo if pid in squad_vars]
+        prob += pulp.lpSum(squad_vars[pid] for pid in combo_in_pool) <= len(combo) - 1
+
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     if prob.status != pulp.LpStatusOptimal:
-        raise RuntimeError(f"No feasible squad found (solver status: {pulp.LpStatus[prob.status]})")
+        return None
 
     by_id = {p["id"]: p for p in pool}
     squad = [by_id[pid] for pid, var in squad_vars.items() if var.value() == 1]
-    starting_ids = {pid for pid, var in xi_vars.items() if var.value() == 1}
-    starting_xi = [p for p in squad if p["id"] in starting_ids]
-    bench = [p for p in squad if p["id"] not in starting_ids]
 
-    starting_xi.sort(key=lambda p: -p["score"])
-    bench.sort(key=lambda p: -p["score"])
-    squad.sort(key=lambda p: (-SQUAD_DISPLAY_ORDER[p["position"]], -p["score"]))
+    gw1_scores = gw1_scores or {}
+
+    def gw1_score(p):
+        return gw1_scores.get(p["id"], p["score"])
+
+    if gw1_scores:
+        starting_xi, bench = _select_starting_xi(squad, gw1_score)
+    else:
+        starting_ids = {pid for pid, var in xi_vars.items() if var.value() == 1}
+        starting_xi = [p for p in squad if p["id"] in starting_ids]
+        bench = [p for p in squad if p["id"] not in starting_ids]
+
+    for p in squad:
+        p["gw1_score"] = gw1_score(p)
+
+    starting_xi.sort(key=lambda p: -gw1_score(p))
+    bench.sort(key=lambda p: -gw1_score(p))
+    squad.sort(key=lambda p: (-SQUAD_DISPLAY_ORDER[p["position"]], -gw1_score(p)))
 
     captain, vice_captain = starting_xi[0], starting_xi[1]
 
@@ -70,4 +124,25 @@ def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_
         "vice_captain": vice_captain,
         "total_cost": round(sum(p["price"] for p in squad), 1),
         "budget_remaining": round(budget - sum(p["price"] for p in squad), 1),
+        "objective_score": round(pulp.value(prob.objective), 1),
     }
+
+
+def build_top_squads(players, budget=100.0, count=5, max_per_team=MAX_PER_REAL_TEAM, gw1_scores=None):
+    """Returns up to `count` distinct squads in descending-score order, using
+    the standard solve/exclude-that-exact-combo/resolve loop: each solve is
+    barred from reproducing any earlier squad exactly, so this is the top-N
+    distinct optimal squads rather than N arbitrary ones. Stops early if
+    fewer than `count` feasible distinct squads exist."""
+    results = []
+    excluded_squads = []
+    for _ in range(count):
+        result = build_squad(
+            players, budget=budget, max_per_team=max_per_team,
+            excluded_squads=excluded_squads, gw1_scores=gw1_scores,
+        )
+        if result is None:
+            break
+        results.append(result)
+        excluded_squads.append({p["id"] for p in result["squad"]})
+    return results
