@@ -174,6 +174,27 @@ def _signal_flags(p):
     return f" [{', '.join(flags)}]" if flags else ""
 
 
+def cmd_players(args):
+    bootstrap, fixtures, understat_teams = _load_cached_data()
+    preseason_data, world_cup_data = _load_signal_data(args)
+    from_event = args.from_event or _current_or_next_event(bootstrap)
+    players = player_value.score_players(
+        bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
+        preseason_data=preseason_data, world_cup_data=world_cup_data,
+    )
+    if args.position:
+        position = args.position.upper()
+        players = [p for p in players if p["position"] == position]
+    if args.max_price is not None:
+        players = [p for p in players if p["price"] <= args.max_price]
+
+    top = players[:args.top]
+    print(f"\nTop {len(top)} players, next {args.gameweeks} GWs from GW{from_event}:\n")
+    for p in top:
+        print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
+              f"score={p['score']:.1f}{_signal_flags(p)}")
+
+
 def cmd_draft(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
@@ -299,6 +320,15 @@ def main():
     fdr_parser.add_argument("--gameweeks", type=int, default=5, help="Number of upcoming gameweeks to average over")
     fdr_parser.add_argument("--from-event", type=int, help="Gameweek to start from (default: current/next)")
 
+    players_parser = subparsers.add_parser("players", help="List the top-scored players for the next N gameweeks")
+    players_parser.add_argument("--gameweeks", type=int, default=5, help="Fixture horizon to score over")
+    players_parser.add_argument("--from-event", type=int, help="Gameweek to start the fixture horizon from")
+    players_parser.add_argument("--position", choices=["GKP", "DEF", "MID", "FWD"], help="Filter to one position")
+    players_parser.add_argument("--max-price", type=float, help="Only show players at or under this price (£m)")
+    players_parser.add_argument("--top", type=int, default=20, help="Number of players to show")
+    players_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
+    players_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+
     draft_parser = subparsers.add_parser("draft", help="Build a pre-GW1 (or any-time) squad from scratch")
     draft_parser.add_argument("--budget", type=float, default=100.0, help="Total squad budget in £m")
     draft_parser.add_argument("--gameweeks", type=int, default=5, help="Fixture horizon to optimize for")
@@ -330,6 +360,7 @@ def main():
     commands = {
         "fetch": lambda: fetch(team_id=args.team_id, understat_season=args.understat_season),
         "fdr": lambda: cmd_fdr(args),
+        "players": lambda: cmd_players(args),
         "draft": lambda: cmd_draft(args),
         "transfers": lambda: cmd_transfers(args),
         "captain": lambda: cmd_captain(args),

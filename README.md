@@ -93,6 +93,14 @@ their own, so they're assigned a relegated team's numbers as a proxy.
 python -m fpl_planner.cli fdr --gameweeks 5
 ```
 
+**Top players** — lists the highest-scored players for a given fixture
+horizon, without any budget/position-quota/squad constraints - useful for
+eyeballing who the scoring model rates before committing to a full squad.
+
+```bash
+python -m fpl_planner.cli players --gameweeks 5 --position MID --max-price 8 --top 20
+```
+
 **Pre-GW1 draft planner** — solves for the top 5 distinct 15-man squads
 (budget/position/max-3-per-team constraints) that maximize a fixture-
 adjusted score, using an integer program (PuLP + the bundled CBC solver).
