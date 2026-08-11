@@ -283,13 +283,18 @@ For a team RotoWire has covered, every squad player is scored as:
 - **in the squad but not in the predicted XI** (implicit bench/rotation risk,
   since the team's predicted XI is known) → scored at 50% for GW1
 
+A team RotoWire *hasn't* covered at all (too early, a fixture postponement,
+or the page's team-name text just didn't match) is different from a
+confirmed bench spot - it's "unknown", not "known and left out" - so it
+gets a smaller 85% penalty for GW1 rather than either the full 50% bench
+penalty or no penalty at all.
+
 This can change which of a squad's 15 starts, who's captain/vice, and (via
 the gameweek plan) whether a bench-rotation swap shows up for GW1
 specifically - shown in `draft` output as `[lineup:out]`/`[lineup:doubtful]`/
-`[lineup:bench]` (predicted starters aren't flagged, to keep the noise down).
-Pass `--no-lineups` to ignore it even when cached data is present. Teams
-RotoWire hasn't covered yet (too early, or a fixture postponement) get no
-adjustment at all rather than being penalized for missing data.
+`[lineup:bench]`/`[lineup:unknown]` (predicted starters aren't flagged, to
+keep the noise down). Pass `--no-lineups` to ignore it even when cached data
+is present.
 
 ## Data sources
 

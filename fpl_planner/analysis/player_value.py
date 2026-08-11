@@ -127,7 +127,7 @@ def _world_cup_minutes_by_player(elements, world_cup_data):
     return minutes
 
 
-_LINEUP_MULTIPLIERS = {"starting": 1.0, "doubtful": 0.6, "bench": 0.5, "out": 0.0}
+_LINEUP_MULTIPLIERS = {"starting": 1.0, "doubtful": 0.6, "unknown": 0.85, "bench": 0.5, "out": 0.0}
 
 # A club fields exactly one starting keeper - unlike DEF/MID/FWD depth, a
 # 2nd/3rd choice keeper essentially never plays outside injury/suspension to
@@ -178,7 +178,10 @@ def _lineup_status_by_player(elements, teams_by_id, lineup_data):
     callers should only pass this in for that gameweek's scoring, not a
     multi-gameweek horizon average. Matching is scoped to each team's own
     squad, same low-false-positive approach as the preseason signal.
-    Returns {player_id: "starting"|"doubtful"|"bench"|"out"}.
+    Returns {player_id: "starting"|"doubtful"|"bench"|"out"} - a player
+    absent from this dict (their club wasn't covered/matched on the page at
+    all) is treated as "unknown" by score_players, distinct from "bench"
+    (club's lineup is known and they're just not in it).
     """
     if not lineup_data:
         return {}
@@ -357,6 +360,11 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
         wc_minutes = wc_minutes_by_id.get(pid, 0)
         fatigue_mult = _world_cup_fatigue_multiplier(wc_minutes, from_event)
         lineup_status = lineup_status_by_id.get(pid)
+        if lineup_status is None and lineup_data:
+            # lineup_data is active but this player's club wasn't covered/
+            # matched on the page at all - riskier than a confirmed start,
+            # but not as risky as being explicitly left out of a known XI.
+            lineup_status = "unknown"
         lineup_mult = _LINEUP_MULTIPLIERS.get(lineup_status, 1.0)
         is_backup_gk = e["element_type"] == 1 and pid not in primary_gk_ids
         depth_mult = BACKUP_GOALKEEPER_MULT if is_backup_gk else 1.0
