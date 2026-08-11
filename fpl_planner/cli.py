@@ -9,7 +9,7 @@ from fpl_planner.analysis import horizon as horizon_module
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
 from fpl_planner.config import LLM_PROVIDER, get_llm_api_key, get_team_id, get_understat_season, get_world_cup_year
-from fpl_planner.fetch import fpl_api, preseason, understat, worldcup
+from fpl_planner.fetch import fpl_api, lineups, preseason, understat, worldcup
 from fpl_planner.storage import load_json, save_json
 
 
@@ -56,6 +56,14 @@ def fetch(team_id=None, understat_season=None):
         save_json("preseason", preseason_data)
         covered = sum(1 for d in preseason_data.values() if d.get("matches_covered"))
         print(f"  saved preseason data for {covered}/{len(preseason.BBC_SLUGS)} clubs")
+
+        print("Fetching predicted lineups (LLM-assisted, RotoWire)...")
+        try:
+            lineup_data = lineups.get_predicted_lineups()
+            save_json("lineups", lineup_data)
+            print(f"  saved predicted lineups for {len(lineup_data)} teams")
+        except Exception as exc:
+            print(f"  skipped predicted lineups fetch: {exc}", file=sys.stderr)
     else:
         print(f"No API key set for LLM provider '{LLM_PROVIDER}' (set GEMINI_API_KEY, ANTHROPIC_API_KEY if "
               "using FPL_PLANNER_LLM_PROVIDER=anthropic, or FPL_PLANNER_LLM_API_KEY), skipping World Cup "
@@ -172,6 +180,9 @@ def _signal_flags(p):
         flags.append(f"WC:{p['world_cup_minutes']:.0f}min")
     if p.get("preseason_fraction") is not None:
         flags.append(f"preseason:{p['preseason_fraction']*100:.0f}%")
+    lineup_status = p.get("predicted_lineup_status")
+    if lineup_status and lineup_status != "starting":
+        flags.append(f"lineup:{lineup_status}")
     return f" [{', '.join(flags)}]" if flags else ""
 
 
@@ -214,11 +225,12 @@ def _format_rotation_note(rotation_in, rotation_out):
     return "bench rotation: " + ", ".join(parts)
 
 
-def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event, preseason_data, world_cup_data):
+def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event,
+                         preseason_data, world_cup_data, lineup_data):
     weekly_plans = horizon_module.plan_horizon(
         {p["id"] for p in result["squad"]}, result["budget_remaining"],
         bootstrap, fixtures, understat_teams, gameweeks=args.gameweeks, from_event=from_event,
-        preseason_data=preseason_data, world_cup_data=world_cup_data,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, lineup_data=lineup_data,
     )
     print(f"\n  Gameweek plan (bench rotations + transfers, GW{from_event}-{from_event + args.gameweeks - 1}):")
     for wp in weekly_plans:
@@ -237,6 +249,10 @@ def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from
 def cmd_draft(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
+    # RotoWire predicted lineups are only meaningful for the very next
+    # unplayed gameweek, so this only ever gets used for GW1 specifically -
+    # never folded into the multi-GW squad-selection score above.
+    lineup_data = None if getattr(args, "no_lineups", False) else _load_optional_json("lineups")
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
@@ -249,8 +265,10 @@ def cmd_draft(args):
     gw1_players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=from_event,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
+        lineup_data=lineup_data if from_event == 1 else None,
     )
     gw1_scores = {p["id"]: p["score"] for p in gw1_players}
+    gw1_lineup_status = {p["id"]: p["predicted_lineup_status"] for p in gw1_players}
 
     results = draft_module.build_top_squads(players, budget=args.budget, count=5, gw1_scores=gw1_scores)
     if not results:
@@ -264,9 +282,14 @@ def cmd_draft(args):
         for p in result["squad"]:
             tag = " (C)" if p["id"] == result["captain"]["id"] else (" (V)" if p["id"] == result["vice_captain"]["id"] else "")
             bench = "" if p in result["starting_xi"] else " [BENCH]"
+            # predicted_lineup_status lives on gw1_players, not the main
+            # multi-GW `players` list this squad's dicts came from - patch
+            # it in just for display, same scope as gw1_score above.
+            p_for_flags = {**p, "predicted_lineup_status": gw1_lineup_status.get(p["id"])}
             print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
-                  f"score={p['score']:.1f} gw1={p['gw1_score']:.1f}{tag}{bench}{_signal_flags(p)}")
-        _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event, preseason_data, world_cup_data)
+                  f"score={p['score']:.1f} gw1={p['gw1_score']:.1f}{tag}{bench}{_signal_flags(p_for_flags)}")
+        _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event,
+                             preseason_data, world_cup_data, lineup_data)
 
 
 def cmd_transfers(args):
@@ -375,6 +398,7 @@ def main():
     draft_parser.add_argument("--from-event", type=int, help="Gameweek to start the fixture horizon from")
     draft_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     draft_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    draft_parser.add_argument("--no-lineups", action="store_true", help="Ignore predicted GW1 lineups even if cached")
 
     transfers_parser = subparsers.add_parser("transfers", help="Suggest transfers for your saved squad")
     transfers_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")

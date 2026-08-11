@@ -76,6 +76,9 @@ If an LLM API key is set (see Setup above), `fetch` also produces:
   match, for the World Cup fatigue signal
 - `preseason.json` — per-club preseason friendly appearances/minutes, for
   the "nailed on starter" signal
+- `lineups.json` — predicted/confirmed starting lineups from RotoWire, for
+  the GW1 predicted-lineup signal (see below) - refetch this one close to
+  kickoff, since it goes stale fast unlike the other two.
 
 See **World Cup fatigue & preseason signals** below for what these do and
 their real limitations - it's the least reliable part of this tool.
@@ -203,6 +206,30 @@ even when the cached data is present, if you'd rather judge that yourself.
   (~20 total) - cheap on a small model, but not free, and it adds real
   wall-clock time to `fetch`.
 
+### Predicted GW1 lineup signal
+
+`draft` also folds in [RotoWire's](https://www.rotowire.com/soccer/lineups.php)
+predicted/confirmed Premier League lineups - but **only for GW1 specifically**,
+never for the multi-gameweek horizon score used to pick the 15 players, and
+never for `transfers`/`captain`. Predicted lineups aren't posted more than a
+few days before kickoff, so unlike the World Cup/preseason signals this one
+goes stale fast - refetch it close to matchday for it to mean anything.
+
+For a team RotoWire has covered, every squad player is scored as:
+- **predicted starter** → no change
+- **explicitly OUT** (injured/suspended) → scored at 0 for GW1
+- **doubtful/questionable** → scored at 60% for GW1
+- **in the squad but not in the predicted XI** (implicit bench/rotation risk,
+  since the team's predicted XI is known) → scored at 50% for GW1
+
+This can change which of a squad's 15 starts, who's captain/vice, and (via
+the gameweek plan) whether a bench-rotation swap shows up for GW1
+specifically - shown in `draft` output as `[lineup:out]`/`[lineup:doubtful]`/
+`[lineup:bench]` (predicted starters aren't flagged, to keep the noise down).
+Pass `--no-lineups` to ignore it even when cached data is present. Teams
+RotoWire hasn't covered yet (too early, or a fixture postponement) get no
+adjustment at all rather than being penalized for missing data.
+
 ## Data sources
 
 - [Official FPL API](https://fantasy.premierleague.com/api/) — no auth
@@ -218,6 +245,11 @@ even when the cached data is present, if you'd rather judge that yourself.
   these are fetched as plain pages and parsed with an LLM call rather than
   scraped with fixed selectors. See the signals section above for caveats
   (including why BBC rather than official club sites).
+- [RotoWire](https://www.rotowire.com/soccer/lineups.php) — predicted/
+  confirmed Premier League starting lineups, same plain-page-plus-LLM-call
+  approach as the two above. Used only for the GW1-specific signal in
+  `draft` (see above) - it's the freshest-but-most-perishable of the three,
+  so `fetch` should be re-run close to kickoff for it to be useful.
 
 ## Next steps
 

@@ -16,7 +16,7 @@ def _adjusted_score(p, fixture_count):
 
 
 def plan_horizon(initial_squad_ids, bank, bootstrap, fixtures, understat_teams, gameweeks, from_event,
-                  preseason_data=None, world_cup_data=None):
+                  preseason_data=None, world_cup_data=None, lineup_data=None):
     """Week-by-week plan across the drafted squad's fixture horizon: which
     single transfer (if any) is worth making that week, and which of the
     15 squad members should start vs sit given that week's fixtures - i.e.
@@ -36,6 +36,10 @@ def plan_horizon(initial_squad_ids, bank, bootstrap, fixtures, understat_teams, 
         whatever the squad looks like that week, using that week's fixture-
         adjusted score, so blank/double gameweeks can change who starts or
         captains independently of any transfer.
+      - `lineup_data` (RotoWire predicted lineups), if given, only ever
+        applies to gameweek 1 specifically - predicted lineups aren't
+        meaningful more than a few days out, so later weeks in the horizon
+        never see it regardless of `from_event`.
 
     Only ever considers one transfer per gameweek - it doesn't model taking
     two hits in the same week for a double swap.
@@ -59,6 +63,7 @@ def plan_horizon(initial_squad_ids, bank, bootstrap, fixtures, understat_teams, 
         gw_scores = player_value.score_players(
             bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=gw,
             preseason_data=preseason_data, world_cup_data=world_cup_data,
+            lineup_data=lineup_data if gw == 1 else None,
         )
 
         transfer_made = None

@@ -1,4 +1,5 @@
 from fpl_planner.analysis import player_match
+from fpl_planner.analysis import teams as teams_module
 from fpl_planner.analysis.fdr import build_team_strength, fixture_ratings, upcoming_team_fdr
 
 POSITIONS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
@@ -126,6 +127,69 @@ def _world_cup_minutes_by_player(elements, world_cup_data):
     return minutes
 
 
+_LINEUP_MULTIPLIERS = {"starting": 1.0, "doubtful": 0.6, "bench": 0.5, "out": 0.0}
+
+
+def _match_team_candidates(team_name, by_norm_team):
+    """team_name is external prose (RotoWire's own team naming) - normalize
+    and fall back to substring matching, same as analysis/teams.py's
+    Understat team matching, since external sources spell club names
+    differently ("Tottenham Hotspur" vs FPL's "Spurs")."""
+    norm = teams_module.normalize(team_name)
+    if norm in by_norm_team:
+        return by_norm_team[norm]
+    for norm_fpl, candidates in by_norm_team.items():
+        if norm in norm_fpl or norm_fpl in norm:
+            return candidates
+    return None
+
+
+def _lineup_status_by_player(elements, teams_by_id, lineup_data):
+    """lineup_data: [{"team", "starters": [names], "out": [names],
+    "doubtful": [names]}, ...] from fetch/lineups.py (RotoWire predicted
+    lineups) - only meaningful for the very next unplayed gameweek, so
+    callers should only pass this in for that gameweek's scoring, not a
+    multi-gameweek horizon average. Matching is scoped to each team's own
+    squad, same low-false-positive approach as the preseason signal.
+    Returns {player_id: "starting"|"doubtful"|"bench"|"out"}.
+    """
+    if not lineup_data:
+        return {}
+
+    by_norm_team = {}
+    for e in elements:
+        norm = teams_module.normalize(teams_by_id[e["team"]]["name"])
+        by_norm_team.setdefault(norm, []).append(e)
+
+    status = {}
+    for team_data in lineup_data:
+        candidates = _match_team_candidates(team_data.get("team", ""), by_norm_team)
+        if not candidates:
+            continue
+
+        # default: this team's predicted XI is known, so anyone in its squad
+        # not otherwise flagged is an implicit bench/rotation risk.
+        for c in candidates:
+            status[c["id"]] = "bench"
+
+        # apply weakest signal first so a stronger one (doubtful, then out)
+        # overrides it if a player is somehow flagged more than one way
+        for name in team_data.get("starters") or []:
+            match = player_match.match_player(candidates, name)
+            if match:
+                status[match["id"]] = "starting"
+        for name in team_data.get("doubtful") or []:
+            match = player_match.match_player(candidates, name)
+            if match:
+                status[match["id"]] = "doubtful"
+        for name in team_data.get("out") or []:
+            match = player_match.match_player(candidates, name)
+            if match:
+                status[match["id"]] = "out"
+
+    return status
+
+
 def build_player_table(bootstrap, preseason_fractions=None):
     """Merge FPL per-player stats with custom fixture difficulty into a single
     scored table. Uses last-season underlying stats (points_per_game, xGI/90,
@@ -164,12 +228,16 @@ def build_player_table(bootstrap, preseason_fractions=None):
 
 
 def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_event=1,
-                   preseason_data=None, world_cup_data=None):
+                   preseason_data=None, world_cup_data=None, lineup_data=None):
     """Full pipeline: team strength -> fixture ratings -> upcoming FDR ->
     per-player composite score/value. Returns a list of player dicts sorted
-    by score descending. `preseason_data`/`world_cup_data` are optional -
-    both fall back to no adjustment when not supplied (e.g. no LLM API key
-    configured for the LLM-assisted fetch that produces them).
+    by score descending. `preseason_data`/`world_cup_data`/`lineup_data` are
+    all optional - each falls back to no adjustment when not supplied (e.g.
+    no LLM API key configured for the LLM-assisted fetch that produces
+    them). `lineup_data` (RotoWire predicted lineups) is only meaningful for
+    the very next unplayed gameweek - callers should only pass it in for a
+    single-gameweek score_players() call for that gameweek, not a
+    multi-gameweek horizon average.
     """
     strength = build_team_strength(bootstrap, understat_teams)
     ratings = fixture_ratings(fixtures, strength)
@@ -178,6 +246,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
     teams_by_id = {t["id"]: t for t in bootstrap["teams"]}
     preseason_fractions = _preseason_fractions(bootstrap["elements"], teams_by_id, preseason_data)
     wc_minutes_by_id = _world_cup_minutes_by_player(bootstrap["elements"], world_cup_data)
+    lineup_status_by_id = _lineup_status_by_player(bootstrap["elements"], teams_by_id, lineup_data)
 
     base_scores = build_player_table(bootstrap, preseason_fractions)
 
@@ -189,7 +258,9 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
         availability_mult = _availability_multiplier(e)
         wc_minutes = wc_minutes_by_id.get(pid, 0)
         fatigue_mult = _world_cup_fatigue_multiplier(wc_minutes, from_event)
-        score = base_scores.get(pid, 0.0) * fixture_mult * availability_mult * fatigue_mult
+        lineup_status = lineup_status_by_id.get(pid)
+        lineup_mult = _LINEUP_MULTIPLIERS.get(lineup_status, 1.0)
+        score = base_scores.get(pid, 0.0) * fixture_mult * availability_mult * fatigue_mult * lineup_mult
         price = e["now_cost"] / 10.0
         players.append({
             "id": pid,
@@ -209,6 +280,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
             "upcoming_fdr": fdr_for_team,
             "preseason_fraction": preseason_fractions.get(pid),
             "world_cup_minutes": wc_minutes,
+            "predicted_lineup_status": lineup_status,
             "score": round(score, 2),
             "value": round(score / price, 3) if price else 0.0,
         })
