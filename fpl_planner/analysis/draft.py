@@ -7,12 +7,13 @@ MAX_PER_REAL_TEAM = 3
 BENCH_WEIGHT = 0.1
 
 
-def _select_starting_xi(squad, score_of):
+def select_starting_xi(squad, score_of):
     """Pick the 11 of `squad` that maximize sum(score_of(p)) within FPL's
     starting-XI position bounds - a small enough problem (15 players) that
     solving it separately from the full squad-selection LP is cheap, and
     lets the starting XI be optimized against a different score (GW1-
-    specific) than whatever picked the 15-man squad in the first place."""
+    specific, or any single gameweek - see analysis/horizon.py) than
+    whatever picked the 15-man squad in the first place."""
     prob = pulp.LpProblem("fpl_starting_xi", pulp.LpMaximize)
     xi_vars = {p["id"]: pulp.LpVariable(f"xi_{p['id']}", cat="Binary") for p in squad}
 
@@ -101,7 +102,7 @@ def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_
         return gw1_scores.get(p["id"], p["score"])
 
     if gw1_scores:
-        starting_xi, bench = _select_starting_xi(squad, gw1_score)
+        starting_xi, bench = select_starting_xi(squad, gw1_score)
     else:
         starting_ids = {pid for pid, var in xi_vars.items() if var.value() == 1}
         starting_xi = [p for p in squad if p["id"] in starting_ids]

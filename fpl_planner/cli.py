@@ -5,6 +5,7 @@ from fpl_planner.analysis import captain as captain_module
 from fpl_planner.analysis import chips as chips_module
 from fpl_planner.analysis import draft as draft_module
 from fpl_planner.analysis import fdr as fdr_module
+from fpl_planner.analysis import horizon as horizon_module
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
 from fpl_planner.config import LLM_PROVIDER, get_llm_api_key, get_team_id, get_understat_season, get_world_cup_year
@@ -195,6 +196,44 @@ def cmd_players(args):
               f"score={p['score']:.1f}{_signal_flags(p)}")
 
 
+def _format_transfer_note(transfer):
+    if not transfer:
+        return None
+    hit_note = f"(-{transfer['hit']} hit)" if transfer["hit"] else "(free)"
+    return f"transfer OUT {transfer['out']['web_name']} IN {transfer['in']['web_name']} ({transfer['gain']:+.1f}) {hit_note}"
+
+
+def _format_rotation_note(rotation_in, rotation_out):
+    if not rotation_in and not rotation_out:
+        return None
+    parts = []
+    if rotation_in:
+        parts.append("IN " + ", ".join(p["web_name"] for p in rotation_in))
+    if rotation_out:
+        parts.append("OUT " + ", ".join(p["web_name"] for p in rotation_out))
+    return "bench rotation: " + ", ".join(parts)
+
+
+def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event, preseason_data, world_cup_data):
+    weekly_plans = horizon_module.plan_horizon(
+        {p["id"] for p in result["squad"]}, result["budget_remaining"],
+        bootstrap, fixtures, understat_teams, gameweeks=args.gameweeks, from_event=from_event,
+        preseason_data=preseason_data, world_cup_data=world_cup_data,
+    )
+    print(f"\n  Gameweek plan (bench rotations + transfers, GW{from_event}-{from_event + args.gameweeks - 1}):")
+    for wp in weekly_plans:
+        notes = [n for n in (
+            _format_transfer_note(wp["transfer"]),
+            _format_rotation_note(wp["rotation_in"], wp["rotation_out"]),
+        ) if n]
+        if not notes:
+            notes.append("no changes")
+        cap = wp["captain"]["web_name"] if wp["captain"] else "-"
+        vice = wp["vice_captain"]["web_name"] if wp["vice_captain"] else "-"
+        print(f"    GW{wp['gameweek']}: {'; '.join(notes)}. Captain: {cap} (C), {vice} (V). "
+              f"[{wp['free_transfers_after']} FT saved]")
+
+
 def cmd_draft(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
@@ -227,6 +266,7 @@ def cmd_draft(args):
             bench = "" if p in result["starting_xi"] else " [BENCH]"
             print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
                   f"score={p['score']:.1f} gw1={p['gw1_score']:.1f}{tag}{bench}{_signal_flags(p)}")
+        _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event, preseason_data, world_cup_data)
 
 
 def cmd_transfers(args):

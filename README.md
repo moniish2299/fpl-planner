@@ -114,6 +114,25 @@ necessarily who you'd start or captain in the very first one.
 python -m fpl_planner.cli draft --budget 100
 ```
 
+Each squad also gets a **gameweek plan** - a week-by-week simulation across
+the `--gameweeks` horizon, printed under that squad's listing:
+
+- **Bench rotation**: each week's starting XI/bench/captain/vice-captain is
+  re-picked from that week's fixtures (blank gameweeks zero a player out of
+  contention, double gameweeks double their weight), so a player can rotate
+  in or out - or take the armband - purely from a fixture swing, with no
+  transfer involved.
+- **Transfers**: from GW2 on, the single best available transfer that
+  gameweek is taken if it's free, or if its point gain over the *remaining*
+  horizon outweighs the 4-point hit. Free transfers accumulate by 1 each
+  week one isn't used (capped at 5, mirroring FPL's saved-transfer rule).
+
+This only ever considers one transfer per gameweek (no modeling of taking
+two hits for a double swap in the same week), and each week's transfer
+decision is greedy/best-available rather than jointly optimized across the
+whole horizon - it can't see that saving this week's transfer would set up
+a much better one two weeks later.
+
 **Transfer suggestions** — for a saved squad (`FPL_TEAM_ID` with picks
 fetched), finds the best single swap for each of your players and ranks
 them by score gain, flagging which are worth a -4 point hit.
