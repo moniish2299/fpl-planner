@@ -195,6 +195,8 @@ def _signal_flags(p):
         flags.append(f"lineup:{lineup_status}")
     if p.get("stats_backfilled"):
         flags.append("backfilled")
+    if p.get("is_backup_goalkeeper"):
+        flags.append("backup GK")
     return f" [{', '.join(flags)}]" if flags else ""
 
 

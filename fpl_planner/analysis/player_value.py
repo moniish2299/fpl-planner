@@ -129,6 +129,33 @@ def _world_cup_minutes_by_player(elements, world_cup_data):
 
 _LINEUP_MULTIPLIERS = {"starting": 1.0, "doubtful": 0.6, "bench": 0.5, "out": 0.0}
 
+# A club fields exactly one starting keeper - unlike DEF/MID/FWD depth, a
+# 2nd/3rd choice keeper essentially never plays outside injury/suspension to
+# the starter, so even a fair statistical score for one would still make the
+# draft/transfer optimizer chase them as "bargains". Penalize anyone at a
+# club who isn't that club's identified #1.
+BACKUP_GOALKEEPER_MULT = 0.25
+
+
+def _primary_goalkeeper_ids(elements):
+    """Identify each team's starting keeper by last-season minutes (the
+    clearest evidence of who actually played), falling back to price (the
+    market/club's own read on pecking order) when no keeper at that club has
+    any history at all - e.g. a promoted club fielding an entirely new pair.
+    """
+    by_team = {}
+    for e in elements:
+        if e["element_type"] == 1:
+            by_team.setdefault(e["team"], []).append(e)
+
+    primary_ids = set()
+    for keepers in by_team.values():
+        with_minutes = [k for k in keepers if float(k.get("minutes") or 0) > 0]
+        pool = with_minutes or keepers
+        best = max(pool, key=lambda k: (float(k.get("minutes") or 0), k["now_cost"]))
+        primary_ids.add(best["id"])
+    return primary_ids
+
 
 def _match_team_candidates(team_name, by_norm_team):
     """team_name is external prose (RotoWire's own team naming) - normalize
@@ -229,7 +256,14 @@ def _backfill_stats(elements):
     for e in elements:
         if _has_historical_data(e):
             continue
-        candidates = by_team_position.get((e["team"], e["element_type"])) or by_position.get(e["element_type"])
+        if e["element_type"] == 1:
+            # Squads carry only 1-2 keepers, so "team+position average" is
+            # really just cloning the other keeper's exact stats onto this
+            # one (see _primary_goalkeeper_ids) - go straight to the
+            # league-wide tier instead of a fake per-team average.
+            candidates = by_position.get(e["element_type"])
+        else:
+            candidates = by_team_position.get((e["team"], e["element_type"])) or by_position.get(e["element_type"])
         if not candidates:
             continue
         stats = {}
@@ -310,6 +344,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
     wc_minutes_by_id = _world_cup_minutes_by_player(bootstrap["elements"], world_cup_data)
     lineup_status_by_id = _lineup_status_by_player(bootstrap["elements"], teams_by_id, lineup_data)
     backfilled_stats = _backfill_stats(bootstrap["elements"])
+    primary_gk_ids = _primary_goalkeeper_ids(bootstrap["elements"])
 
     base_scores = build_player_table(bootstrap, preseason_fractions, backfilled_stats)
 
@@ -323,7 +358,9 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
         fatigue_mult = _world_cup_fatigue_multiplier(wc_minutes, from_event)
         lineup_status = lineup_status_by_id.get(pid)
         lineup_mult = _LINEUP_MULTIPLIERS.get(lineup_status, 1.0)
-        score = base_scores.get(pid, 0.0) * fixture_mult * availability_mult * fatigue_mult * lineup_mult
+        is_backup_gk = e["element_type"] == 1 and pid not in primary_gk_ids
+        depth_mult = BACKUP_GOALKEEPER_MULT if is_backup_gk else 1.0
+        score = base_scores.get(pid, 0.0) * fixture_mult * availability_mult * fatigue_mult * lineup_mult * depth_mult
         price = e["now_cost"] / 10.0
         backfill = backfilled_stats.get(pid)
         players.append({
@@ -348,6 +385,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
             "world_cup_minutes": wc_minutes,
             "predicted_lineup_status": lineup_status,
             "stats_backfilled": backfill is not None,
+            "is_backup_goalkeeper": is_backup_gk,
             "score": round(score, 2),
             "value": round(score / price, 3) if price else 0.0,
         })

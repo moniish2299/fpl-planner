@@ -204,7 +204,24 @@ entire back line), it falls back to a price-weighted league-wide average
 at that position instead of leaving them at zero. This always runs (no
 LLM key needed) and applies everywhere `score_players()` is used -
 `players`/`draft`/`transfers`/`captain` all flag affected players with
-`[backfilled]`.
+`[backfilled]`. Goalkeepers are the one exception to the "same-team"
+tier - see below.
+
+### Backup goalkeepers
+
+A club only ever starts one keeper, unlike DEF/MID/FWD depth where several
+teammates genuinely share the pitch. That breaks the backfill above for
+GKPs specifically: a team usually has just one keeper with real history, so
+"average of same-team, same-position teammates" is really just cloning that
+one starter's exact stats onto the backup - making a cheap 2nd-choice
+keeper look statistically identical to (and thus a screaming value bargain
+next to) an expensive #1, which would otherwise get drafted/transferred in
+purely because it looks like free value. To fix that: goalkeepers skip the
+same-team backfill tier entirely (they go straight to the league-wide
+average), and every keeper who isn't their club's identified #1 - by
+last season's minutes, falling back to price when no keeper at that club
+has any history at all - gets an explicit score penalty on top, regardless
+of backfill. Affected players are flagged `[backup GK]`.
 
 ### World Cup fatigue & preseason signals
 
