@@ -13,7 +13,7 @@ from fpl_planner.fetch import fpl_api, lineups, preseason, understat, worldcup
 from fpl_planner.storage import load_json, save_json
 
 
-def fetch(team_id=None, understat_season=None):
+def fetch(team_id=None, understat_season=None, skip_world_cup=False, skip_preseason=False, skip_lineups=False):
     print("Fetching bootstrap-static (players, teams, gameweeks)...")
     bootstrap = fpl_api.get_bootstrap()
     save_json("bootstrap", bootstrap)
@@ -36,34 +36,43 @@ def fetch(team_id=None, understat_season=None):
         print(f"  skipped Understat fetch: {exc}", file=sys.stderr)
 
     if get_llm_api_key():
-        wc_year = get_world_cup_year()
-        print(f"Fetching World Cup fatigue data ({wc_year}, LLM-assisted via {LLM_PROVIDER})...")
-        try:
-            wc_data = worldcup.get_world_cup_minutes(wc_year)
-            save_json("worldcup", wc_data)
-            print(f"  saved minutes for {len(wc_data)} World Cup players")
-        except Exception as exc:
-            print(f"  skipped World Cup fetch: {exc}", file=sys.stderr)
-
-        print(f"Fetching preseason friendly lineups (LLM-assisted, {len(preseason.BBC_SLUGS)} clubs)...")
-        preseason_data = {}
-        for club_name in preseason.BBC_SLUGS:
+        if skip_world_cup:
+            print("Skipping World Cup fatigue data (--no-world-cup).")
+        else:
+            wc_year = get_world_cup_year()
+            print(f"Fetching World Cup fatigue data ({wc_year}, LLM-assisted via {LLM_PROVIDER})...")
             try:
-                appearances, matches_covered = preseason.get_club_preseason_appearances(club_name)
-                preseason_data[club_name] = {"appearances": appearances, "matches_covered": matches_covered}
+                wc_data = worldcup.get_world_cup_minutes(wc_year)
+                save_json("worldcup", wc_data)
+                print(f"  saved minutes for {len(wc_data)} World Cup players")
             except Exception as exc:
-                print(f"  skipped {club_name}: {exc}", file=sys.stderr)
-        save_json("preseason", preseason_data)
-        covered = sum(1 for d in preseason_data.values() if d.get("matches_covered"))
-        print(f"  saved preseason data for {covered}/{len(preseason.BBC_SLUGS)} clubs")
+                print(f"  skipped World Cup fetch: {exc}", file=sys.stderr)
 
-        print("Fetching predicted lineups (LLM-assisted, RotoWire)...")
-        try:
-            lineup_data = lineups.get_predicted_lineups()
-            save_json("lineups", lineup_data)
-            print(f"  saved predicted lineups for {len(lineup_data)} teams")
-        except Exception as exc:
-            print(f"  skipped predicted lineups fetch: {exc}", file=sys.stderr)
+        if skip_preseason:
+            print("Skipping preseason friendly lineups (--no-preseason).")
+        else:
+            print(f"Fetching preseason friendly lineups (LLM-assisted, {len(preseason.BBC_SLUGS)} clubs)...")
+            preseason_data = {}
+            for club_name in preseason.BBC_SLUGS:
+                try:
+                    appearances, matches_covered = preseason.get_club_preseason_appearances(club_name)
+                    preseason_data[club_name] = {"appearances": appearances, "matches_covered": matches_covered}
+                except Exception as exc:
+                    print(f"  skipped {club_name}: {exc}", file=sys.stderr)
+            save_json("preseason", preseason_data)
+            covered = sum(1 for d in preseason_data.values() if d.get("matches_covered"))
+            print(f"  saved preseason data for {covered}/{len(preseason.BBC_SLUGS)} clubs")
+
+        if skip_lineups:
+            print("Skipping predicted lineups (--no-lineups).")
+        else:
+            print("Fetching predicted lineups (LLM-assisted, RotoWire)...")
+            try:
+                lineup_data = lineups.get_predicted_lineups()
+                save_json("lineups", lineup_data)
+                print(f"  saved predicted lineups for {len(lineup_data)} teams")
+            except Exception as exc:
+                print(f"  skipped predicted lineups fetch: {exc}", file=sys.stderr)
     else:
         print(f"No API key set for LLM provider '{LLM_PROVIDER}' (set GEMINI_API_KEY, ANTHROPIC_API_KEY if "
               "using FPL_PLANNER_LLM_PROVIDER=anthropic, or FPL_PLANNER_LLM_API_KEY), skipping World Cup "
@@ -378,6 +387,9 @@ def main():
     fetch_parser = subparsers.add_parser("fetch", help="Fetch and cache FPL + Understat data")
     fetch_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
     fetch_parser.add_argument("--understat-season", help="Understat season, e.g. 2025 for 2025-26")
+    fetch_parser.add_argument("--no-world-cup", action="store_true", help="Skip fetching World Cup fatigue data")
+    fetch_parser.add_argument("--no-preseason", action="store_true", help="Skip fetching preseason friendly lineups")
+    fetch_parser.add_argument("--no-lineups", action="store_true", help="Skip fetching predicted GW1 lineups")
 
     fdr_parser = subparsers.add_parser("fdr", help="Show custom fixture difficulty ratings")
     fdr_parser.add_argument("--gameweeks", type=int, default=5, help="Number of upcoming gameweeks to average over")
@@ -422,7 +434,10 @@ def main():
     args = parser.parse_args()
 
     commands = {
-        "fetch": lambda: fetch(team_id=args.team_id, understat_season=args.understat_season),
+        "fetch": lambda: fetch(
+            team_id=args.team_id, understat_season=args.understat_season,
+            skip_world_cup=args.no_world_cup, skip_preseason=args.no_preseason, skip_lineups=args.no_lineups,
+        ),
         "fdr": lambda: cmd_fdr(args),
         "players": lambda: cmd_players(args),
         "draft": lambda: cmd_draft(args),

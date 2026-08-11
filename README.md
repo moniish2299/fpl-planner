@@ -80,6 +80,16 @@ If an LLM API key is set (see Setup above), `fetch` also produces:
   the GW1 predicted-lineup signal (see below) - refetch this one close to
   kickoff, since it goes stale fast unlike the other two.
 
+Pass `--no-world-cup`, `--no-preseason`, and/or `--no-lineups` to `fetch`
+to skip any of these three LLM-assisted fetches individually (e.g. you
+already have fresh preseason/World Cup data cached and just want to
+refresh the fast-changing lineup predictions, or you'd rather not spend
+the LLM calls on a signal you don't plan to use):
+
+```bash
+python -m fpl_planner.cli fetch --no-world-cup --no-preseason
+```
+
 See **World Cup fatigue & preseason signals** below for what these do and
 their real limitations - it's the least reliable part of this tool.
 
