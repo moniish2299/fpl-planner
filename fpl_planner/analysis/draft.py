@@ -33,7 +33,7 @@ def select_starting_xi(squad, score_of):
 
 
 def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_ids=None,
-                 excluded_squads=None, gw1_scores=None):
+                 excluded_squads=None, gw1_scores=None, must_include_ids=None):
     """Solve for the 15-man squad that maximizes score under FPL's
     budget/position/team constraints.
 
@@ -47,13 +47,18 @@ def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_
     those two decisions on separate scores. `excluded_squads` is a list of
     id-sets; each solve is barred from reproducing one exactly (see
     `build_top_squads`), yielding distinct near-optimal squads in ranked
-    order rather than the same one every time.
+    order rather than the same one every time. `must_include_ids`, if
+    given, forces those player ids into every returned squad - the
+    optimizer still picks the other 15-minus-N players and the starting
+    XI/captain freely, so a required player isn't guaranteed to start,
+    just to be on the 15.
 
-    Returns None if no feasible squad remains (e.g. all reasonable
-    combinations have already been excluded).
+    Returns None if no feasible squad remains (e.g. the required players
+    and budget/position/team constraints can't all be satisfied at once).
     """
     excluded_ids = excluded_ids or set()
     excluded_squads = excluded_squads or []
+    must_include_ids = must_include_ids or set()
     pool = [p for p in players if p["id"] not in excluded_ids and p["status"] != "u"]
 
     prob = pulp.LpProblem("fpl_draft", pulp.LpMaximize)
@@ -87,6 +92,10 @@ def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_
     for combo in excluded_squads:
         combo_in_pool = [pid for pid in combo if pid in squad_vars]
         prob += pulp.lpSum(squad_vars[pid] for pid in combo_in_pool) <= len(combo) - 1
+
+    for pid in must_include_ids:
+        if pid in squad_vars:
+            prob += squad_vars[pid] == 1
 
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
@@ -129,7 +138,8 @@ def build_squad(players, budget=100.0, max_per_team=MAX_PER_REAL_TEAM, excluded_
     }
 
 
-def build_top_squads(players, budget=100.0, count=5, max_per_team=MAX_PER_REAL_TEAM, gw1_scores=None):
+def build_top_squads(players, budget=100.0, count=5, max_per_team=MAX_PER_REAL_TEAM, gw1_scores=None,
+                      must_include_ids=None):
     """Returns up to `count` distinct squads in descending-score order, using
     the standard solve/exclude-that-exact-combo/resolve loop: each solve is
     barred from reproducing any earlier squad exactly, so this is the top-N
@@ -140,7 +150,7 @@ def build_top_squads(players, budget=100.0, count=5, max_per_team=MAX_PER_REAL_T
     for _ in range(count):
         result = build_squad(
             players, budget=budget, max_per_team=max_per_team,
-            excluded_squads=excluded_squads, gw1_scores=gw1_scores,
+            excluded_squads=excluded_squads, gw1_scores=gw1_scores, must_include_ids=must_include_ids,
         )
         if result is None:
             break

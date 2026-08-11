@@ -127,6 +127,22 @@ necessarily who you'd start or captain in the very first one.
 python -m fpl_planner.cli draft --budget 100
 ```
 
+To guarantee specific players end up in every returned squad, pass
+`--include` (repeatable, or comma-separate multiple names in one flag):
+
+```bash
+python -m fpl_planner.cli draft --budget 100 --include Haaland --include "Virgil,Salah"
+```
+
+Matching is a global fuzzy name match (last name is usually enough), and
+each match is echoed back before the squads print so you can catch a wrong
+match. This only guarantees the player is on the 15 - the optimizer still
+freely picks the other 14, and still decides the starting XI/bench/captain
+on its own (an included player isn't guaranteed to start). If the required
+players can't all fit under the budget/position/max-3-per-team constraints
+at once, it prints a clear "no feasible squad" error rather than silently
+dropping one.
+
 Each squad also gets a **gameweek plan** - a week-by-week simulation across
 the `--gameweeks` horizon, printed under that squad's listing:
 

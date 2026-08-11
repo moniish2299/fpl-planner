@@ -6,6 +6,7 @@ from fpl_planner.analysis import chips as chips_module
 from fpl_planner.analysis import draft as draft_module
 from fpl_planner.analysis import fdr as fdr_module
 from fpl_planner.analysis import horizon as horizon_module
+from fpl_planner.analysis import player_match
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
 from fpl_planner.config import LLM_PROVIDER, get_llm_api_key, get_team_id, get_understat_season, get_world_cup_year
@@ -255,6 +256,26 @@ def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from
               f"[{wp['free_transfers_after']} FT saved]")
 
 
+def _match_players_by_name(names, players):
+    """Resolve --include's player names against the full scored pool -
+    global fuzzy matching (no team/club to scope by, unlike the WC/preseason
+    signals) is acceptable risk here since the user typed the name
+    themselves and gets the matched player echoed back to confirm."""
+    matched_ids = []
+    for name in names:
+        candidate = player_match.match_player(players, name, min_score=1.0)
+        if not candidate:
+            print(f"Could not find a player matching '{name}' - check spelling.", file=sys.stderr)
+            sys.exit(1)
+        if candidate["status"] == "u":
+            print(f"'{candidate['web_name']}' is unavailable (left club/not in a squad) - can't force them in.",
+                  file=sys.stderr)
+            sys.exit(1)
+        print(f"  requiring {candidate['web_name']} ({candidate['team']}, {candidate['position']}) in the squad")
+        matched_ids.append(candidate["id"])
+    return matched_ids
+
+
 def cmd_draft(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
@@ -279,9 +300,15 @@ def cmd_draft(args):
     gw1_scores = {p["id"]: p["score"] for p in gw1_players}
     gw1_lineup_status = {p["id"]: p["predicted_lineup_status"] for p in gw1_players}
 
-    results = draft_module.build_top_squads(players, budget=args.budget, count=5, gw1_scores=gw1_scores)
+    include_names = [n.strip() for raw in (args.include or []) for n in raw.split(",") if n.strip()]
+    must_include_ids = _match_players_by_name(include_names, players) if include_names else None
+
+    results = draft_module.build_top_squads(
+        players, budget=args.budget, count=5, gw1_scores=gw1_scores, must_include_ids=must_include_ids,
+    )
     if not results:
-        print("No feasible squad found for that budget.", file=sys.stderr)
+        reason = " that includes all --include players" if must_include_ids else ""
+        print(f"No feasible squad found{reason} for that budget.", file=sys.stderr)
         sys.exit(1)
 
     for i, result in enumerate(results, start=1):
@@ -411,6 +438,8 @@ def main():
     draft_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     draft_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
     draft_parser.add_argument("--no-lineups", action="store_true", help="Ignore predicted GW1 lineups even if cached")
+    draft_parser.add_argument("--include", action="append",
+                               help="Player name to force into every squad (repeatable, or comma-separate names)")
 
     transfers_parser = subparsers.add_parser("transfers", help="Suggest transfers for your saved squad")
     transfers_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
