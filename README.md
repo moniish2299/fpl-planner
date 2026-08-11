@@ -188,6 +188,24 @@ rule-of-thumb until then.
 python -m fpl_planner.cli chips --team-id 1234567
 ```
 
+### No-history backfill
+
+The scoring model leans on last season's stats (points-per-game, xGI/90,
+ICT, minutes), which doesn't exist for a new signing, a promoted club's
+debutant, or an academy graduate - anyone with 0 minutes last season.
+Rather than scoring them as a flat zero (the worst possible player at
+their position, which isn't a fair prior for someone who simply hasn't
+played in the league yet), those stats are backfilled with a price-weighted
+average of their same-team, same-position teammates who do have history -
+their price already reflects what the club/market expects of them, so a
+similarly-priced teammate's output is a reasonable stand-in. If a club has
+nobody with history at that position either (e.g. a newly-promoted side's
+entire back line), it falls back to a price-weighted league-wide average
+at that position instead of leaving them at zero. This always runs (no
+LLM key needed) and applies everywhere `score_players()` is used -
+`players`/`draft`/`transfers`/`captain` all flag affected players with
+`[backfilled]`.
+
 ### World Cup fatigue & preseason signals
 
 `draft`/`transfers`/`captain` output flags players with `[WC:<minutes>min]`

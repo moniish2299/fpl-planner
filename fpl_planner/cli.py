@@ -193,6 +193,8 @@ def _signal_flags(p):
     lineup_status = p.get("predicted_lineup_status")
     if lineup_status and lineup_status != "starting":
         flags.append(f"lineup:{lineup_status}")
+    if p.get("stats_backfilled"):
+        flags.append("backfilled")
     return f" [{', '.join(flags)}]" if flags else ""
 
 

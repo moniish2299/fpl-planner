@@ -190,16 +190,78 @@ def _lineup_status_by_player(elements, teams_by_id, lineup_data):
     return status
 
 
-def build_player_table(bootstrap, preseason_fractions=None):
+_BACKFILL_FIELDS = ("points_per_game", "expected_goal_involvements_per_90", "ict_index", "minutes")
+
+
+def _has_historical_data(e):
+    return float(e.get("minutes") or 0) > 0
+
+
+def _price_weighted_average(candidates, field):
+    total_weight = sum(c["now_cost"] for c in candidates)
+    if not total_weight:
+        return None
+    return sum(float(c[field] or 0) * c["now_cost"] for c in candidates) / total_weight
+
+
+def _backfill_stats(elements):
+    """Players with zero minutes last season - new signings, promoted-team
+    debutants, academy graduates - have no real history to score off of;
+    defaulting them to literal zeros judges them as the worst possible
+    player at their position, which isn't a fair prior. Substitute a
+    price-weighted average of same-team, same-position teammates' stats
+    instead (their price already reflects the club/market's expectation of
+    them), falling back to a price-weighted league-wide average at that
+    position if their club has nobody with history there either (e.g. a
+    fully rebuilt back line at a promoted club).
+
+    Returns {player_id: {field: value}} for only the backfilled players,
+    covering points_per_game/xGI-per-90/ICT/minutes.
+    """
+    with_history = [e for e in elements if _has_historical_data(e)]
+
+    by_team_position, by_position = {}, {}
+    for e in with_history:
+        by_team_position.setdefault((e["team"], e["element_type"]), []).append(e)
+        by_position.setdefault(e["element_type"], []).append(e)
+
+    backfilled = {}
+    for e in elements:
+        if _has_historical_data(e):
+            continue
+        candidates = by_team_position.get((e["team"], e["element_type"])) or by_position.get(e["element_type"])
+        if not candidates:
+            continue
+        stats = {}
+        for field in _BACKFILL_FIELDS:
+            value = _price_weighted_average(candidates, field)
+            if value is not None:
+                stats[field] = value
+        if stats:
+            backfilled[e["id"]] = stats
+    return backfilled
+
+
+def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=None):
     """Merge FPL per-player stats with custom fixture difficulty into a single
     scored table. Uses last-season underlying stats (points_per_game, xGI/90,
     ICT, minutes) since current-season form doesn't exist yet pre-GW1; the
     fixture multiplier is the only forward-looking adjustment. When
     preseason_fractions has an entry for a player, it's blended into the
-    minutes component as a more current "nailed on" signal.
+    minutes component as a more current "nailed on" signal. `backfilled_stats`
+    (see _backfill_stats) substitutes a price-weighted teammate average for
+    any player with zero minutes last season, instead of scoring them as a
+    flat zero across every stat.
     """
     preseason_fractions = preseason_fractions or {}
+    backfilled_stats = backfilled_stats or {}
     elements = bootstrap["elements"]
+
+    def stat(e, field):
+        backfill = backfilled_stats.get(e["id"])
+        if backfill and field in backfill:
+            return backfill[field]
+        return float(e[field] or 0)
 
     by_position = {}
     for e in elements:
@@ -207,10 +269,10 @@ def build_player_table(bootstrap, preseason_fractions=None):
 
     base_scores = {}
     for pos, players in by_position.items():
-        ppg = _percentile_ranks({p["id"]: float(p["points_per_game"] or 0) for p in players})
-        xgi90 = _percentile_ranks({p["id"]: float(p["expected_goal_involvements_per_90"] or 0) for p in players})
-        ict = _percentile_ranks({p["id"]: float(p["ict_index"] or 0) for p in players})
-        minutes_pct = _percentile_ranks({p["id"]: float(p["minutes"] or 0) for p in players})
+        ppg = _percentile_ranks({p["id"]: stat(p, "points_per_game") for p in players})
+        xgi90 = _percentile_ranks({p["id"]: stat(p, "expected_goal_involvements_per_90") for p in players})
+        ict = _percentile_ranks({p["id"]: stat(p, "ict_index") for p in players})
+        minutes_pct = _percentile_ranks({p["id"]: stat(p, "minutes") for p in players})
         for p in players:
             pid = p["id"]
             if pid in preseason_fractions:
@@ -247,8 +309,9 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
     preseason_fractions = _preseason_fractions(bootstrap["elements"], teams_by_id, preseason_data)
     wc_minutes_by_id = _world_cup_minutes_by_player(bootstrap["elements"], world_cup_data)
     lineup_status_by_id = _lineup_status_by_player(bootstrap["elements"], teams_by_id, lineup_data)
+    backfilled_stats = _backfill_stats(bootstrap["elements"])
 
-    base_scores = build_player_table(bootstrap, preseason_fractions)
+    base_scores = build_player_table(bootstrap, preseason_fractions, backfilled_stats)
 
     players = []
     for e in bootstrap["elements"]:
@@ -262,6 +325,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
         lineup_mult = _LINEUP_MULTIPLIERS.get(lineup_status, 1.0)
         score = base_scores.get(pid, 0.0) * fixture_mult * availability_mult * fatigue_mult * lineup_mult
         price = e["now_cost"] / 10.0
+        backfill = backfilled_stats.get(pid)
         players.append({
             "id": pid,
             "web_name": e["web_name"],
@@ -273,14 +337,17 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
             "price": price,
             "status": e["status"],
             "chance_of_playing_next_round": e.get("chance_of_playing_next_round"),
-            "points_per_game_last_season": float(e["points_per_game"] or 0),
+            "points_per_game_last_season": (backfill or {}).get("points_per_game", float(e["points_per_game"] or 0)),
             "total_points_last_season": e["total_points"],
-            "xgi_per_90": float(e["expected_goal_involvements_per_90"] or 0),
-            "minutes_last_season": e["minutes"],
+            "xgi_per_90": (backfill or {}).get(
+                "expected_goal_involvements_per_90", float(e["expected_goal_involvements_per_90"] or 0)
+            ),
+            "minutes_last_season": (backfill or {}).get("minutes", e["minutes"]),
             "upcoming_fdr": fdr_for_team,
             "preseason_fraction": preseason_fractions.get(pid),
             "world_cup_minutes": wc_minutes,
             "predicted_lineup_status": lineup_status,
+            "stats_backfilled": backfill is not None,
             "score": round(score, 2),
             "value": round(score / price, 3) if price else 0.0,
         })
