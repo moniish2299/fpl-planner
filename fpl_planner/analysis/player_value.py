@@ -310,6 +310,15 @@ def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=Non
         xgi90 = _percentile_ranks({p["id"]: stat(p, "expected_goal_involvements_per_90") for p in players})
         ict = _percentile_ranks({p["id"]: stat(p, "ict_index") for p in players})
         minutes_pct = _percentile_ranks({p["id"]: stat(p, "minutes") for p in players})
+        # xGI/90 is an attacking-involvement stat - meaningless for a
+        # shot-stopper, and most keepers tie at exactly 0.0 for it, so its
+        # 25% weight ends up rewarding rounding noise rather than quality.
+        # Fold that weight into points-per-game instead, which already
+        # captures a keeper's actual output (clean sheets/saves/bonus).
+        if POSITIONS.get(pos) == "GKP":
+            ppg_weight, xgi_weight = 0.70, 0.0
+        else:
+            ppg_weight, xgi_weight = 0.45, 0.25
         for p in players:
             pid = p["id"]
             if pid in preseason_fractions:
@@ -317,8 +326,8 @@ def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=Non
             else:
                 minutes_component = minutes_pct[pid]
             base_scores[pid] = (
-                0.45 * ppg[pid]
-                + 0.25 * xgi90[pid]
+                ppg_weight * ppg[pid]
+                + xgi_weight * xgi90[pid]
                 + 0.15 * ict[pid]
                 + 0.15 * minutes_component
             ) * 100

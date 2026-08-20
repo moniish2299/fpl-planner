@@ -188,6 +188,17 @@ rule-of-thumb until then.
 python -m fpl_planner.cli chips --team-id 1234567
 ```
 
+### Goalkeeper scoring quirks
+
+The base score weights points-per-game/xGI-per-90/ICT/minutes at
+45/25/15/15%. xGI-per-90 (expected goal involvements) is an attacking-output
+stat and meaningless for a shot-stopper - in practice almost every keeper
+ties at exactly 0.0 for it, so its 25% weight ends up rewarding whichever
+handful of keepers have a tiny nonzero rounding artifact there, not real
+quality. For GKP specifically, that 25% is folded into points-per-game
+instead (70/0/15/15), which actually reflects a keeper's clean
+sheets/saves/bonus output.
+
 ### No-history backfill
 
 The scoring model leans on last season's stats (points-per-game, xGI/90,
