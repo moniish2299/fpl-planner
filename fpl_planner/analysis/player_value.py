@@ -12,6 +12,11 @@ _UNAVAILABLE_STATUSES = {"u", "n", "s"}
 # player's had a normal preseason-length turnaround regardless.
 _FATIGUE_WINDOW_GWS = 5
 
+# Preseason friendly minutes are the best "nailed on" signal before any real
+# season minutes exist, but stop being useful the moment real minutes do -
+# fully faded out by 3 full matches' worth of actual season minutes.
+_PRESEASON_FADE_MINUTES = 270
+
 
 def _percentile_ranks(values):
     """values: {id: float}. Returns {id: 0..1 percentile rank}, higher is better."""
@@ -69,6 +74,17 @@ def _world_cup_fatigue_multiplier(wc_minutes, from_event):
         return 1.0
     fade = max(0.0, (_FATIGUE_WINDOW_GWS - (from_event - 1)) / _FATIGUE_WINDOW_GWS)
     return 1 - base_penalty * fade
+
+
+def _preseason_blend_weight(real_minutes):
+    """Weight given to the preseason fraction in the minutes component,
+    linearly faded from 0.6 (no real season minutes yet) to 0.0 (>=3 full
+    matches of real minutes this season) - `real_minutes` should be this
+    player's own raw current-season minutes (not a backfilled proxy), so a
+    player who simply hasn't featured yet doesn't get faded off preseason
+    just because other players' gameweeks have passed."""
+    fade = max(0.0, 1 - real_minutes / _PRESEASON_FADE_MINUTES)
+    return 0.6 * fade
 
 
 def _as_minutes(value):
@@ -281,14 +297,19 @@ def _backfill_stats(elements):
 
 def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=None):
     """Merge FPL per-player stats with custom fixture difficulty into a single
-    scored table. Uses last-season underlying stats (points_per_game, xGI/90,
-    ICT, minutes) since current-season form doesn't exist yet pre-GW1; the
-    fixture multiplier is the only forward-looking adjustment. When
+    scored table. `points_per_game`/`expected_goal_involvements_per_90`/
+    `ict_index`/`minutes` are read straight off the live bootstrap payload,
+    so once real gameweeks have been played this is real current-season
+    form, not last season's; pre-GW1 those fields are just 0 for almost
+    everyone, which is why the preseason/backfill substitutes below exist.
+    The fixture multiplier is the only forward-looking adjustment. When
     preseason_fractions has an entry for a player, it's blended into the
-    minutes component as a more current "nailed on" signal. `backfilled_stats`
-    (see _backfill_stats) substitutes a price-weighted teammate average for
-    any player with zero minutes last season, instead of scoring them as a
-    flat zero across every stat.
+    minutes component as a "nailed on" signal, weighted by
+    `_preseason_blend_weight` so it fades out as this player accumulates
+    real season minutes rather than staying fixed all season.
+    `backfilled_stats` (see _backfill_stats) substitutes a price-weighted
+    teammate average for any player with zero minutes this season so far,
+    instead of scoring them as a flat zero across every stat.
     """
     preseason_fractions = preseason_fractions or {}
     backfilled_stats = backfilled_stats or {}
@@ -322,7 +343,11 @@ def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=Non
         for p in players:
             pid = p["id"]
             if pid in preseason_fractions:
-                minutes_component = 0.4 * minutes_pct[pid] + 0.6 * preseason_fractions[pid]
+                real_minutes = float(p.get("minutes") or 0)
+                preseason_weight = _preseason_blend_weight(real_minutes)
+                minutes_component = (
+                    (1 - preseason_weight) * minutes_pct[pid] + preseason_weight * preseason_fractions[pid]
+                )
             else:
                 minutes_component = minutes_pct[pid]
             base_scores[pid] = (

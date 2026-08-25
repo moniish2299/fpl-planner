@@ -178,6 +178,18 @@ their score doubled; a player whose team doesn't play is excluded).
 python -m fpl_planner.cli captain --team-id 1234567 --gameweek 1
 ```
 
+**Lineup** — for a saved squad, picks the starting XI/bench for one specific
+gameweek and the captain/vice within that XI, in one command. Uses the same
+blank/double-gameweek weighting as `captain` (a blank-gameweek squad member
+is valued at 0 for that week, so they naturally get bumped to the bench
+ahead of anyone with a fixture, without a hard exclusion rule), and folds in
+the predicted-lineup signal (see below) when the gameweek being asked about
+is the very next unplayed one.
+
+```bash
+python -m fpl_planner.cli lineup --team-id 1234567 --gameweek 5
+```
+
 **Chip timing** — scans the fixture list for blank/double gameweeks and
 recommends Free Hit / Wildcard / Bench Boost / Triple Captain timing around
 them. Pre-season the fixture list has no blanks/doubles yet (those appear
@@ -253,7 +265,11 @@ even when the cached data is present, if you'd rather judge that yourself.
   sections.
 - **Preseason "nailed on" signal**: blends each player's share of their
   club's preseason friendly minutes into the existing minutes-based score
-  component (last season's minutes alone otherwise). Sourced from each
+  component (real season minutes alone otherwise). This blend fades out as
+  a player accumulates real minutes this season - full weight (60%) at 0
+  real minutes, linearly down to 0% by 3 full matches' worth of real
+  minutes - so once someone's nailed on for real, stale preseason
+  friendlies stop dragging their score around. Sourced from each
   club's BBC Sport team page rather than the club's own site: official club
   sites turned out to be almost entirely JavaScript SPAs (a plain HTTP GET
   returns an empty shell - verified directly, most return under 2KB of real
@@ -278,34 +294,36 @@ even when the cached data is present, if you'd rather judge that yourself.
   (~20 total) - cheap on a small model, but not free, and it adds real
   wall-clock time to `fetch`.
 
-### Predicted GW1 lineup signal
+### Predicted lineup signal
 
-`draft` also folds in [RotoWire's](https://www.rotowire.com/soccer/lineups.php)
-predicted/confirmed Premier League lineups - but **only for GW1 specifically**,
-never for the multi-gameweek horizon score used to pick the 15 players, and
-never for `transfers`/`captain`. Predicted lineups aren't posted more than a
-few days before kickoff, so unlike the World Cup/preseason signals this one
-goes stale fast - refetch it close to matchday for it to mean anything.
+`draft` and `lineup` fold in [RotoWire's](https://www.rotowire.com/soccer/lineups.php)
+predicted/confirmed Premier League lineups - but **only for the very next
+unplayed gameweek** (for `draft` that's specifically GW1, since that's when
+you'd run it; for `lineup` it's whatever gameweek is currently next), never
+for the multi-gameweek horizon score used to pick a squad, and never for
+`transfers`/`captain`. Predicted lineups aren't posted more than a few days
+before kickoff, so unlike the World Cup/preseason signals this one goes
+stale fast - refetch it close to matchday for it to mean anything.
 
 For a team RotoWire has covered, every squad player is scored as:
 - **predicted starter** → no change
-- **explicitly OUT** (injured/suspended) → scored at 0 for GW1
-- **doubtful/questionable** → scored at 60% for GW1
+- **explicitly OUT** (injured/suspended) → scored at 0 for that gameweek
+- **doubtful/questionable** → scored at 60% for that gameweek
 - **in the squad but not in the predicted XI** (implicit bench/rotation risk,
-  since the team's predicted XI is known) → scored at 50% for GW1
+  since the team's predicted XI is known) → scored at 50% for that gameweek
 
 A team RotoWire *hasn't* covered at all (too early, a fixture postponement,
 or the page's team-name text just didn't match) is different from a
 confirmed bench spot - it's "unknown", not "known and left out" - so it
-gets a smaller 85% penalty for GW1 rather than either the full 50% bench
-penalty or no penalty at all.
+gets a smaller 85% penalty for that gameweek rather than either the full
+50% bench penalty or no penalty at all.
 
 This can change which of a squad's 15 starts, who's captain/vice, and (via
-the gameweek plan) whether a bench-rotation swap shows up for GW1
-specifically - shown in `draft` output as `[lineup:out]`/`[lineup:doubtful]`/
-`[lineup:bench]`/`[lineup:unknown]` (predicted starters aren't flagged, to
-keep the noise down). Pass `--no-lineups` to ignore it even when cached data
-is present.
+the gameweek plan/`lineup`) whether a bench-rotation swap shows up for that
+gameweek specifically - shown in `draft`/`lineup` output as
+`[lineup:out]`/`[lineup:doubtful]`/`[lineup:bench]`/`[lineup:unknown]`
+(predicted starters aren't flagged, to keep the noise down). Pass
+`--no-lineups` to ignore it even when cached data is present.
 
 ## Data sources
 

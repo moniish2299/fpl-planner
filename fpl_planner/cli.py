@@ -6,6 +6,7 @@ from fpl_planner.analysis import chips as chips_module
 from fpl_planner.analysis import draft as draft_module
 from fpl_planner.analysis import fdr as fdr_module
 from fpl_planner.analysis import horizon as horizon_module
+from fpl_planner.analysis import lineup as lineup_module
 from fpl_planner.analysis import player_match
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
@@ -390,6 +391,46 @@ def cmd_captain(args):
               f"adjusted={c['adjusted_score']:.1f}{dgw}{tag}{_signal_flags(c)}")
 
 
+def cmd_lineup(args):
+    bootstrap, fixtures, understat_teams = _load_cached_data()
+    preseason_data, world_cup_data = _load_signal_data(args)
+    team_id = args.team_id or get_team_id()
+    if not team_id:
+        print("Provide --team-id or set FPL_TEAM_ID.", file=sys.stderr)
+        sys.exit(1)
+    squad_ids, _ = _load_squad(team_id)
+
+    target_gw = args.gameweek or _current_or_next_event(bootstrap)
+    # RotoWire predicted lineups are only meaningful for the very next
+    # unplayed gameweek - only worth loading when that's actually the
+    # gameweek being asked about, not some later one.
+    lineup_data = None
+    if not getattr(args, "no_lineups", False) and target_gw == _current_or_next_event(bootstrap):
+        lineup_data = _load_optional_json("lineups")
+    players = player_value.score_players(
+        bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, lineup_data=lineup_data,
+    )
+
+    result = lineup_module.recommend_lineup(players, squad_ids, fixtures, target_gw)
+    xi_ids = [p["id"] for p in result["starting_xi"]]
+    captain_result = captain_module.recommend_captain(
+        [p for p in players if p["id"] in xi_ids], xi_ids, fixtures, target_gw,
+    )
+
+    print(f"\nLineup for GW{target_gw}:\n")
+    print("Starting XI:")
+    for p in result["starting_xi"]:
+        tag = " (C)" if captain_result["captain"] and p["id"] == captain_result["captain"]["id"] else (
+            " (V)" if captain_result["vice_captain"] and p["id"] == captain_result["vice_captain"]["id"] else "")
+        print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} score={p['score']:.1f}"
+              f"{tag}{_signal_flags(p)}")
+
+    print("\nBench (autosub priority order, keeper always last):")
+    for p in result["bench"]:
+        print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} score={p['score']:.1f}{_signal_flags(p)}")
+
+
 def cmd_chips(args):
     bootstrap, fixtures, understat_teams = _load_cached_data()
     from_event = args.from_event or _current_or_next_event(bootstrap)
@@ -460,6 +501,14 @@ def main():
     captain_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     captain_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
 
+    lineup_parser = subparsers.add_parser(
+        "lineup", help="Pick starting XI/bench + captain for your saved squad in a given gameweek")
+    lineup_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
+    lineup_parser.add_argument("--gameweek", type=int, help="Gameweek to pick for (default: current/next)")
+    lineup_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
+    lineup_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    lineup_parser.add_argument("--no-lineups", action="store_true", help="Ignore predicted lineups even if cached")
+
     chips_parser = subparsers.add_parser("chips", help="Recommend chip timing (Wildcard/Bench Boost/Triple Captain/Free Hit)")
     chips_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
     chips_parser.add_argument("--from-event", type=int, help="Gameweek to start looking from (default: current/next)")
@@ -476,6 +525,7 @@ def main():
         "draft": lambda: cmd_draft(args),
         "transfers": lambda: cmd_transfers(args),
         "captain": lambda: cmd_captain(args),
+        "lineup": lambda: cmd_lineup(args),
         "chips": lambda: cmd_chips(args),
     }
     commands[args.command]()
