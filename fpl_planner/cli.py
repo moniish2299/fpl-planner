@@ -233,7 +233,7 @@ def cmd_players(args):
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
         current_understat_teams=current_understat_teams,
-        preseason_data=preseason_data, world_cup_data=world_cup_data,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=not args.no_backfill,
     )
     if args.position:
         position = args.position.upper()
@@ -273,6 +273,7 @@ def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from
         bootstrap, fixtures, understat_teams, gameweeks=args.gameweeks, from_event=from_event,
         current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data, lineup_data=lineup_data,
+        use_backfill=not args.no_backfill,
     )
     print(f"\n  Gameweek plan (bench rotations + transfers, GW{from_event}-{from_event + args.gameweeks - 1}):")
     for wp in weekly_plans:
@@ -319,7 +320,7 @@ def cmd_draft(args):
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
         current_understat_teams=current_understat_teams,
-        preseason_data=preseason_data, world_cup_data=world_cup_data,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=not args.no_backfill,
     )
     # Squad selection uses the multi-GW score above (what's worth drafting
     # over the horizon), but starting XI/bench and captain/vice should
@@ -328,7 +329,7 @@ def cmd_draft(args):
     gw1_players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=from_event,
         current_understat_teams=current_understat_teams,
-        preseason_data=preseason_data, world_cup_data=world_cup_data,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=not args.no_backfill,
         lineup_data=lineup_data if from_event == 1 else None,
     )
     gw1_scores = {p["id"]: p["score"] for p in gw1_players}
@@ -375,7 +376,7 @@ def cmd_transfers(args):
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
         current_understat_teams=current_understat_teams,
-        preseason_data=preseason_data, world_cup_data=world_cup_data,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=not args.no_backfill,
     )
     suggestions = transfers_module.suggest_transfers(
         players, squad_ids, bank, free_transfers=args.free_transfers, max_suggestions=args.max_suggestions
@@ -406,7 +407,7 @@ def cmd_captain(args):
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw,
         current_understat_teams=current_understat_teams,
-        preseason_data=preseason_data, world_cup_data=world_cup_data,
+        preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=not args.no_backfill,
     )
     result = captain_module.recommend_captain(players, squad_ids, fixtures, target_gw)
 
@@ -442,6 +443,7 @@ def cmd_lineup(args):
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw,
         current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data, lineup_data=lineup_data,
+        use_backfill=not args.no_backfill,
     )
 
     result = lineup_module.recommend_lineup(players, squad_ids, fixtures, target_gw)
@@ -511,6 +513,8 @@ def main():
     players_parser.add_argument("--top", type=int, default=20, help="Number of players to show")
     players_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     players_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    players_parser.add_argument("--no-backfill", action="store_true",
+                                 help="Score zero-minute players as a flat zero instead of a teammate-average backfill")
 
     draft_parser = subparsers.add_parser("draft", help="Build a pre-GW1 (or any-time) squad from scratch")
     draft_parser.add_argument("--budget", type=float, default=100.0, help="Total squad budget in £m")
@@ -518,6 +522,8 @@ def main():
     draft_parser.add_argument("--from-event", type=int, help="Gameweek to start the fixture horizon from")
     draft_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     draft_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    draft_parser.add_argument("--no-backfill", action="store_true",
+                               help="Score zero-minute players as a flat zero instead of a teammate-average backfill")
     draft_parser.add_argument("--no-lineups", action="store_true", help="Ignore predicted GW1 lineups even if cached")
     draft_parser.add_argument("--include", action="append",
                                help="Player name to force into every squad (repeatable, or comma-separate names)")
@@ -530,12 +536,16 @@ def main():
     transfers_parser.add_argument("--max-suggestions", type=int, default=5)
     transfers_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     transfers_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    transfers_parser.add_argument("--no-backfill", action="store_true",
+                                   help="Score zero-minute players as a flat zero instead of a teammate-average backfill")
 
     captain_parser = subparsers.add_parser("captain", help="Recommend captain/vice-captain for your saved squad")
     captain_parser.add_argument("--team-id", help="Your FPL team/entry ID (overrides FPL_TEAM_ID env var)")
     captain_parser.add_argument("--gameweek", type=int, help="Gameweek to recommend for (default: current/next)")
     captain_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     captain_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    captain_parser.add_argument("--no-backfill", action="store_true",
+                                 help="Score zero-minute players as a flat zero instead of a teammate-average backfill")
 
     lineup_parser = subparsers.add_parser(
         "lineup", help="Pick starting XI/bench + captain for your saved squad in a given gameweek")
@@ -543,6 +553,8 @@ def main():
     lineup_parser.add_argument("--gameweek", type=int, help="Gameweek to pick for (default: current/next)")
     lineup_parser.add_argument("--no-world-cup", action="store_true", help="Ignore the World Cup fatigue signal even if cached")
     lineup_parser.add_argument("--no-preseason", action="store_true", help="Ignore the preseason minutes signal even if cached")
+    lineup_parser.add_argument("--no-backfill", action="store_true",
+                                help="Score zero-minute players as a flat zero instead of a teammate-average backfill")
     lineup_parser.add_argument("--no-lineups", action="store_true", help="Ignore predicted lineups even if cached")
 
     chips_parser = subparsers.add_parser("chips", help="Recommend chip timing (Wildcard/Bench Boost/Triple Captain/Free Hit)")

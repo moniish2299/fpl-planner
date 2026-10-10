@@ -361,7 +361,8 @@ def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=Non
 
 
 def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_event=1,
-                   current_understat_teams=None, preseason_data=None, world_cup_data=None, lineup_data=None):
+                   current_understat_teams=None, preseason_data=None, world_cup_data=None, lineup_data=None,
+                   use_backfill=True):
     """Full pipeline: team strength -> fixture ratings -> upcoming FDR ->
     per-player composite score/value. Returns a list of player dicts sorted
     by score descending. `current_understat_teams`/`preseason_data`/
@@ -375,7 +376,11 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
     `lineup_data` (RotoWire predicted lineups) is only meaningful for
     the very next unplayed gameweek - callers should only pass it in for a
     single-gameweek score_players() call for that gameweek, not a
-    multi-gameweek horizon average.
+    multi-gameweek horizon average. `use_backfill=False` scores every
+    zero-minutes-this-season player as a flat zero instead of substituting
+    a price-weighted teammate average (see _backfill_stats) - on by
+    default since the flat-zero prior is a worse default, but available
+    for anyone who'd rather judge those players themselves.
     """
     strength = build_team_strength(bootstrap, understat_teams, current_understat_teams, from_event)
     ratings = fixture_ratings(fixtures, strength)
@@ -385,7 +390,7 @@ def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_ev
     preseason_fractions = _preseason_fractions(bootstrap["elements"], teams_by_id, preseason_data)
     wc_minutes_by_id = _world_cup_minutes_by_player(bootstrap["elements"], world_cup_data)
     lineup_status_by_id = _lineup_status_by_player(bootstrap["elements"], teams_by_id, lineup_data)
-    backfilled_stats = _backfill_stats(bootstrap["elements"])
+    backfilled_stats = _backfill_stats(bootstrap["elements"]) if use_backfill else {}
     primary_gk_ids = _primary_goalkeeper_ids(bootstrap["elements"])
 
     base_scores = build_player_table(bootstrap, preseason_fractions, backfilled_stats)

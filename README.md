@@ -233,11 +233,13 @@ their price already reflects what the club/market expects of them, so a
 similarly-priced teammate's output is a reasonable stand-in. If a club has
 nobody with history at that position either (e.g. a newly-promoted side's
 entire back line), it falls back to a price-weighted league-wide average
-at that position instead of leaving them at zero. This always runs (no
-LLM key needed) and applies everywhere `score_players()` is used -
-`players`/`draft`/`transfers`/`captain` all flag affected players with
-`[backfilled]`. Goalkeepers are the one exception to the "same-team"
-tier - see below.
+at that position instead of leaving them at zero. This runs by default (no
+LLM key needed) wherever `score_players()` is used -
+`players`/`draft`/`transfers`/`captain`/`lineup` all flag affected players
+with `[backfilled]`. Pass `--no-backfill` to any of those commands to
+score those players as a flat zero instead, if you'd rather judge an
+unproven player yourself than trust the teammate-average stand-in.
+Goalkeepers are the one exception to the "same-team" tier - see below.
 
 ### Backup goalkeepers
 

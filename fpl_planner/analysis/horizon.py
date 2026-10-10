@@ -16,7 +16,8 @@ def _adjusted_score(p, fixture_count):
 
 
 def plan_horizon(initial_squad_ids, bank, bootstrap, fixtures, understat_teams, gameweeks, from_event,
-                  current_understat_teams=None, preseason_data=None, world_cup_data=None, lineup_data=None):
+                  current_understat_teams=None, preseason_data=None, world_cup_data=None, lineup_data=None,
+                  use_backfill=True):
     """Week-by-week plan across the drafted squad's fixture horizon: which
     single transfer (if any) is worth making that week, and which of the
     15 squad members should start vs sit given that week's fixtures - i.e.
@@ -59,12 +60,12 @@ def plan_horizon(initial_squad_ids, bank, bootstrap, fixtures, understat_teams, 
         pool_for_transfers = player_value.score_players(
             bootstrap, fixtures, understat_teams, num_gameweeks=remaining_gws, from_event=gw,
             current_understat_teams=current_understat_teams,
-            preseason_data=preseason_data, world_cup_data=world_cup_data,
+            preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=use_backfill,
         )
         gw_scores = player_value.score_players(
             bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=gw,
             current_understat_teams=current_understat_teams,
-            preseason_data=preseason_data, world_cup_data=world_cup_data,
+            preseason_data=preseason_data, world_cup_data=world_cup_data, use_backfill=use_backfill,
             lineup_data=lineup_data if gw == 1 else None,
         )
 
