@@ -361,18 +361,23 @@ def build_player_table(bootstrap, preseason_fractions=None, backfilled_stats=Non
 
 
 def score_players(bootstrap, fixtures, understat_teams, num_gameweeks=5, from_event=1,
-                   preseason_data=None, world_cup_data=None, lineup_data=None):
+                   current_understat_teams=None, preseason_data=None, world_cup_data=None, lineup_data=None):
     """Full pipeline: team strength -> fixture ratings -> upcoming FDR ->
     per-player composite score/value. Returns a list of player dicts sorted
-    by score descending. `preseason_data`/`world_cup_data`/`lineup_data` are
-    all optional - each falls back to no adjustment when not supplied (e.g.
-    no LLM API key configured for the LLM-assisted fetch that produces
-    them). `lineup_data` (RotoWire predicted lineups) is only meaningful for
+    by score descending. `current_understat_teams`/`preseason_data`/
+    `world_cup_data`/`lineup_data` are all optional - each falls back to no
+    adjustment when not supplied (e.g. no LLM API key configured for the
+    LLM-assisted fetch that produces the latter three, or no Understat data
+    yet for the in-progress season). `current_understat_teams`, if given, is
+    blended into the prior-season team strength baseline per `from_event`
+    (see build_team_strength) so fixture difficulty leans on this season's
+    actual results more and last season's less as real gameweeks pass.
+    `lineup_data` (RotoWire predicted lineups) is only meaningful for
     the very next unplayed gameweek - callers should only pass it in for a
     single-gameweek score_players() call for that gameweek, not a
     multi-gameweek horizon average.
     """
-    strength = build_team_strength(bootstrap, understat_teams)
+    strength = build_team_strength(bootstrap, understat_teams, current_understat_teams, from_event)
     ratings = fixture_ratings(fixtures, strength)
     team_fdr = upcoming_team_fdr(ratings, num_gameweeks=num_gameweeks, from_event=from_event)
 

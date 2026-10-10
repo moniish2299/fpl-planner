@@ -2,10 +2,46 @@ import bisect
 
 from fpl_planner.analysis.teams import with_promoted_team_proxies
 
+# Last season's Understat data is the only signal available pre-season, but
+# this season's actual results are a truer read on a team's current level -
+# weight the prior-season baseline out and this season's results in,
+# linearly, over the first 5 gameweeks (fully current-season by GW6).
+_TEAM_STRENGTH_FADE_GWS = 5
+
 
 def _avg(matches, key):
     vals = [float(m[key]) for m in matches]
     return sum(vals) / len(vals) if vals else None
+
+
+def _last_season_weight(from_event):
+    return max(0.0, min(1.0, (_TEAM_STRENGTH_FADE_GWS + 1 - from_event) / _TEAM_STRENGTH_FADE_GWS))
+
+
+def _team_rates(ut):
+    """ut: one Understat team entry, with a 'history' list of per-match xG/
+    xGA. Returns raw attack/defense rates split by home/away - defense
+    negated so higher always means 'stronger', consistent with attack.
+    A split with no matches yet (e.g. this season, before that team's first
+    game) comes back None rather than 0, so it blends as "no data" rather
+    than "team is terrible"."""
+    home = [m for m in ut["history"] if m["h_a"] == "h"]
+    away = [m for m in ut["history"] if m["h_a"] == "a"]
+    conceded_home, conceded_away = _avg(home, "xGA"), _avg(away, "xGA")
+    return {
+        "attack_home": _avg(home, "xG"),
+        "attack_away": _avg(away, "xG"),
+        "defense_home": -conceded_home if conceded_home is not None else None,
+        "defense_away": -conceded_away if conceded_away is not None else None,
+    }
+
+
+def _blend_rate(last_value, current_value, last_season_weight):
+    if current_value is None:
+        return last_value
+    if last_value is None:
+        return current_value
+    return last_season_weight * last_value + (1 - last_season_weight) * current_value
 
 
 def _scale_1_to_5(values):
@@ -20,10 +56,17 @@ def _scale_1_to_5(values):
     return result
 
 
-def build_team_strength(bootstrap, understat_teams):
+def build_team_strength(bootstrap, understat_teams, current_understat_teams=None, from_event=1):
     """Per-team attack/defense strength split by home/away, derived from prior
     season Understat xG data (FPL's own strength_* fields are blank pre-season).
     Promoted teams get a relegated team's numbers substituted as a proxy.
+
+    When `current_understat_teams` (this season's Understat data, sparse
+    early on) is given, it's blended in against the prior-season baseline,
+    weighted by `_last_season_weight(from_event)` - prior season dominates
+    at GW1, this season's actual results dominate from GW6 on. A team with
+    no matches yet this season (or missing from `current_understat_teams`
+    entirely) just keeps its prior-season rate until it has some.
 
     Returns {
       "attack": {team_id: {"home": 1-5, "away": 1-5}},   # higher = stronger attack
@@ -33,21 +76,25 @@ def build_team_strength(bootstrap, understat_teams):
     """
     fpl_teams = bootstrap["teams"]
     matched, unmatched, proxied = with_promoted_team_proxies(fpl_teams, understat_teams)
+    current_matched = {}
+    if current_understat_teams:
+        current_matched, _, _ = with_promoted_team_proxies(fpl_teams, current_understat_teams)
+    last_season_weight = _last_season_weight(from_event)
 
     raw_attack, raw_defense = {}, {}
     for t in fpl_teams:
         ut = matched.get(t["id"])
         if ut is None:
             continue
-        home = [m for m in ut["history"] if m["h_a"] == "h"]
-        away = [m for m in ut["history"] if m["h_a"] == "a"]
-        raw_attack[(t["id"], "home")] = _avg(home, "xG")
-        raw_attack[(t["id"], "away")] = _avg(away, "xG")
-        # negate xGA so higher = better defense, consistent with "higher = stronger"
-        conceded_home = _avg(home, "xGA")
-        conceded_away = _avg(away, "xGA")
-        raw_defense[(t["id"], "home")] = -conceded_home if conceded_home is not None else None
-        raw_defense[(t["id"], "away")] = -conceded_away if conceded_away is not None else None
+        last = _team_rates(ut)
+        current = _team_rates(current_matched[t["id"]]) if t["id"] in current_matched else {}
+        for split in ("home", "away"):
+            raw_attack[(t["id"], split)] = _blend_rate(
+                last[f"attack_{split}"], current.get(f"attack_{split}"), last_season_weight
+            )
+            raw_defense[(t["id"], split)] = _blend_rate(
+                last[f"defense_{split}"], current.get(f"defense_{split}"), last_season_weight
+            )
 
     attack_scaled = _scale_1_to_5(raw_attack)
     defense_scaled = _scale_1_to_5(raw_defense)

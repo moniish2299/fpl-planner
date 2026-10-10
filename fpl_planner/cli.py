@@ -10,7 +10,14 @@ from fpl_planner.analysis import lineup as lineup_module
 from fpl_planner.analysis import player_match
 from fpl_planner.analysis import player_value
 from fpl_planner.analysis import transfers as transfers_module
-from fpl_planner.config import LLM_PROVIDER, get_llm_api_key, get_team_id, get_understat_season, get_world_cup_year
+from fpl_planner.config import (
+    LLM_PROVIDER,
+    get_llm_api_key,
+    get_team_id,
+    get_understat_current_season,
+    get_understat_season,
+    get_world_cup_year,
+)
 from fpl_planner.fetch import fpl_api, lineups, preseason, understat, worldcup
 from fpl_planner.storage import load_json, save_json
 
@@ -36,6 +43,20 @@ def fetch(team_id=None, understat_season=None, skip_world_cup=False, skip_presea
         print(f"  saved {len(league_data['players'])} players, {len(league_data['teams'])} teams")
     except Exception as exc:
         print(f"  skipped Understat fetch: {exc}", file=sys.stderr)
+
+    # This season's own results (sparse early on, but real) - blended against
+    # the prior-season baseline above so team strength leans on actual
+    # current-season form by GW6 instead of staying pinned to last season all
+    # year. Never fails the overall fetch: before the season's Understat page
+    # exists, or between seasons, this just has nothing to add yet.
+    current_season = get_understat_current_season()
+    print(f"Fetching current-season Understat data ({current_season})...")
+    try:
+        current_league_data = understat.get_league_data(current_season)
+        save_json("understat_teams_current", current_league_data["teams"])
+        print(f"  saved {len(current_league_data['teams'])} teams")
+    except Exception as exc:
+        print(f"  skipped current-season Understat fetch: {exc}", file=sys.stderr)
 
     if get_llm_api_key():
         if skip_world_cup:
@@ -125,7 +146,11 @@ def _load_cached_data():
     except FileNotFoundError:
         print("No cached data found. Run `python -m fpl_planner.cli fetch` first.", file=sys.stderr)
         sys.exit(1)
-    return bootstrap, fixtures, understat_teams
+    # Optional: only present once a `fetch` has run with this season's
+    # Understat page actually available - score_players()/build_team_strength()
+    # fall back to the prior-season-only baseline when this is None.
+    current_understat_teams = _load_optional_json("understat_teams_current")
+    return bootstrap, fixtures, understat_teams, current_understat_teams
 
 
 def _load_signal_data(args=None):
@@ -165,15 +190,15 @@ def _load_squad(team_id):
 
 
 def cmd_fdr(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
-    strength = fdr_module.build_team_strength(bootstrap, understat_teams)
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
+    from_event = args.from_event or _current_or_next_event(bootstrap)
+    strength = fdr_module.build_team_strength(bootstrap, understat_teams, current_understat_teams, from_event)
     if strength["proxied_teams"]:
         print(f"Promoted teams using a relegated team's stats as a proxy: {strength['proxied_teams']}")
     if strength["unmatched_teams"]:
         print(f"Could not match (no prior-season proxy available): {strength['unmatched_teams']}")
 
     ratings = fdr_module.fixture_ratings(fixtures, strength)
-    from_event = args.from_event or _current_or_next_event(bootstrap)
     upcoming = fdr_module.upcoming_team_fdr(ratings, num_gameweeks=args.gameweeks, from_event=from_event)
     team_names = {t["id"]: t["name"] for t in bootstrap["teams"]}
 
@@ -202,11 +227,12 @@ def _signal_flags(p):
 
 
 def cmd_players(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     if args.position:
@@ -241,10 +267,11 @@ def _format_rotation_note(rotation_in, rotation_out):
 
 
 def _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event,
-                         preseason_data, world_cup_data, lineup_data):
+                         current_understat_teams, preseason_data, world_cup_data, lineup_data):
     weekly_plans = horizon_module.plan_horizon(
         {p["id"] for p in result["squad"]}, result["budget_remaining"],
         bootstrap, fixtures, understat_teams, gameweeks=args.gameweeks, from_event=from_event,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data, lineup_data=lineup_data,
     )
     print(f"\n  Gameweek plan (bench rotations + transfers, GW{from_event}-{from_event + args.gameweeks - 1}):")
@@ -282,7 +309,7 @@ def _match_players_by_name(names, players):
 
 
 def cmd_draft(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
     # RotoWire predicted lineups are only meaningful for the very next
     # unplayed gameweek, so this only ever gets used for GW1 specifically -
@@ -291,6 +318,7 @@ def cmd_draft(args):
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     # Squad selection uses the multi-GW score above (what's worth drafting
@@ -299,6 +327,7 @@ def cmd_draft(args):
     # score, single gameweek from the same starting point.
     gw1_players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=from_event,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
         lineup_data=lineup_data if from_event == 1 else None,
     )
@@ -330,11 +359,11 @@ def cmd_draft(args):
             print(f"  {p['position']:4s} {p['web_name']:16s} {p['team']:15s} £{p['price']:.1f}  "
                   f"score={p['score']:.1f} gw1={p['gw1_score']:.1f}{tag}{bench}{_signal_flags(p_for_flags)}")
         _print_horizon_plan(result, bootstrap, fixtures, understat_teams, args, from_event,
-                             preseason_data, world_cup_data, lineup_data)
+                             current_understat_teams, preseason_data, world_cup_data, lineup_data)
 
 
 def cmd_transfers(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
     team_id = args.team_id or get_team_id()
     if not team_id:
@@ -345,6 +374,7 @@ def cmd_transfers(args):
     from_event = args.from_event or _current_or_next_event(bootstrap)
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=args.gameweeks, from_event=from_event,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     suggestions = transfers_module.suggest_transfers(
@@ -364,7 +394,7 @@ def cmd_transfers(args):
 
 
 def cmd_captain(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
     team_id = args.team_id or get_team_id()
     if not team_id:
@@ -375,6 +405,7 @@ def cmd_captain(args):
     target_gw = args.gameweek or _current_or_next_event(bootstrap)
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data,
     )
     result = captain_module.recommend_captain(players, squad_ids, fixtures, target_gw)
@@ -392,7 +423,7 @@ def cmd_captain(args):
 
 
 def cmd_lineup(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
     preseason_data, world_cup_data = _load_signal_data(args)
     team_id = args.team_id or get_team_id()
     if not team_id:
@@ -409,6 +440,7 @@ def cmd_lineup(args):
         lineup_data = _load_optional_json("lineups")
     players = player_value.score_players(
         bootstrap, fixtures, understat_teams, num_gameweeks=1, from_event=target_gw,
+        current_understat_teams=current_understat_teams,
         preseason_data=preseason_data, world_cup_data=world_cup_data, lineup_data=lineup_data,
     )
 
@@ -432,7 +464,7 @@ def cmd_lineup(args):
 
 
 def cmd_chips(args):
-    bootstrap, fixtures, understat_teams = _load_cached_data()
+    bootstrap, fixtures, understat_teams, current_understat_teams = _load_cached_data()
     from_event = args.from_event or _current_or_next_event(bootstrap)
 
     squad_team_ids = None
@@ -440,7 +472,11 @@ def cmd_chips(args):
     if team_id:
         try:
             squad_ids, _ = _load_squad(team_id)
-            by_id = {p["id"]: p for p in player_value.score_players(bootstrap, fixtures, understat_teams)}
+            players = player_value.score_players(
+                bootstrap, fixtures, understat_teams, from_event=from_event,
+                current_understat_teams=current_understat_teams,
+            )
+            by_id = {p["id"]: p for p in players}
             squad_team_ids = {by_id[pid]["team_id"] for pid in squad_ids if pid in by_id}
         except SystemExit:
             squad_team_ids = None

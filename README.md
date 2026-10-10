@@ -62,7 +62,12 @@ Fetched data is cached as JSON under `data/`:
 - `bootstrap.json` — all players, teams, positions, gameweeks
 - `fixtures.json` — full fixture list with difficulty ratings
 - `understat.json` / `understat_teams.json` — underlying xG/xA/npxG stats
-  per player and per team
+  per player and per team, for last (completed) season — the baseline FDR
+  uses pre-season
+- `understat_teams_current.json` — the same, for the in-progress season.
+  Sparse or empty early on (no matches played yet), filling in as the
+  season goes; see **Fixture difficulty fades in this season's own results**
+  below
 - `entry_<id>.json`, `entry_<id>_history.json`, `entry_<id>_picks.json` —
   your own team, season history, and current picks (if `FPL_TEAM_ID` is set
   and you've saved a squad — otherwise use `draft` below to build one)
@@ -98,9 +103,13 @@ their real limitations - it's the least reliable part of this tool.
 All of these read from the local cache, so run `fetch` first.
 
 **Custom fixture difficulty (FDR)** — FPL's own team-strength ratings are
-blank pre-season, so this is derived from last season's Understat xG/xGA
-per team (split home/away). Promoted teams have no top-flight history of
-their own, so they're assigned a relegated team's numbers as a proxy.
+blank pre-season, so this starts out derived entirely from last season's
+Understat xG/xGA per team (split home/away). Promoted teams have no
+top-flight history of their own, so they're assigned a relegated team's
+numbers as a proxy. From GW1 to GW6, this last-season baseline is
+gradually weighted out in favor of this season's own (actual, if sparse)
+results — see **Fixture difficulty fades in this season's own results**
+below.
 
 ```bash
 python -m fpl_planner.cli fdr --gameweeks 5
@@ -213,9 +222,9 @@ sheets/saves/bonus output.
 
 ### No-history backfill
 
-The scoring model leans on last season's stats (points-per-game, xGI/90,
-ICT, minutes), which doesn't exist for a new signing, a promoted club's
-debutant, or an academy graduate - anyone with 0 minutes last season.
+The scoring model leans on this season's own stats (points-per-game, xGI/90,
+ICT, minutes), which doesn't exist yet for a new signing, a promoted club's
+debutant, or an academy graduate - anyone with 0 minutes so far this season.
 Rather than scoring them as a flat zero (the worst possible player at
 their position, which isn't a fair prior for someone who simply hasn't
 played in the league yet), those stats are backfilled with a price-weighted
@@ -242,9 +251,30 @@ next to) an expensive #1, which would otherwise get drafted/transferred in
 purely because it looks like free value. To fix that: goalkeepers skip the
 same-team backfill tier entirely (they go straight to the league-wide
 average), and every keeper who isn't their club's identified #1 - by
-last season's minutes, falling back to price when no keeper at that club
-has any history at all - gets an explicit score penalty on top, regardless
-of backfill. Affected players are flagged `[backup GK]`.
+minutes played so far this season, falling back to price when no keeper at
+that club has any minutes at all yet - gets an explicit score penalty on
+top, regardless of backfill. Affected players are flagged `[backup GK]`.
+
+### Fixture difficulty fades in this season's own results
+
+The FDR used for the fixture multiplier (see **Custom fixture difficulty
+(FDR)** above) starts out pinned entirely to last season's Understat
+xG/xGA per team, since this season has no results yet to judge a team by.
+That's `fetch`'s `understat_teams.json`. Each `fetch` also pulls
+`understat_teams_current.json` - this season's own Understat data, which is
+empty or just a match or two deep early on, but real. From GW1 to GW6 that
+last-season baseline is linearly weighted out and this season's own data
+weighted in, per team and per home/away split, reaching 100% this-season
+by GW6 - a team that's clearly improved or declined from last season (new
+manager, key signing, relegation-form squad) stops being judged on last
+year by the time there's a month of real evidence otherwise. A team with
+no matches of its own yet in `understat_teams_current.json` (true at GW1,
+possible for a specific team even later if its Understat page lags) just
+keeps its last-season rate until it has some - there's no sudden jump to
+an unknown value. This fade runs automatically wherever FDR feeds into a
+score (`fdr`/`players`/`draft`/`transfers`/`captain`/`lineup`/`chips`); no
+flag to disable it, since (unlike the World Cup/preseason signals below)
+it never needs an LLM call and has no real failure mode to opt out of.
 
 ### World Cup fatigue & preseason signals
 
@@ -342,14 +372,18 @@ gameweek specifically - shown in `draft`/`lineup` output as
   (including why BBC rather than official club sites).
 - [RotoWire](https://www.rotowire.com/soccer/lineups.php) — predicted/
   confirmed Premier League starting lineups, same plain-page-plus-LLM-call
-  approach as the two above. Used only for the GW1-specific signal in
-  `draft` (see above) - it's the freshest-but-most-perishable of the three,
-  so `fetch` should be re-run close to kickoff for it to be useful.
+  approach as the two above. Only meaningful for the very next unplayed
+  gameweek, so it's only ever used for that one in `draft`/`lineup` (see
+  above) - it's the freshest-but-most-perishable of the three, so `fetch`
+  should be re-run close to kickoff for it to be useful.
 
 ## Next steps
 
-The scoring model currently leans on last season's underlying stats since
-there's no current-season form pre-GW1. Once gameweeks start, a natural
-follow-up is blending in current-season form/xG as it accumulates, and
-computing free-transfer counts from transfer history instead of passing
+Team strength (FDR) and the player-level minutes blend now fade from
+last-season/preseason data to this season's own as real gameweeks pass
+(see **Fixture difficulty fades in this season's own results** and
+**Preseason "nailed on" signal** above) - the remaining per-player stats
+(points-per-game, xGI/90, ICT) are read live off the current season
+already and need no such fade. A natural follow-up is computing
+free-transfer counts from transfer history instead of passing
 `--free-transfers` manually.

@@ -41,6 +41,17 @@ def get_understat_season():
     return os.environ.get("UNDERSTAT_SEASON", "2025")
 
 
+def get_understat_current_season():
+    """Understat season label for the in-progress season - defaults to one
+    year after the prior-season baseline above, since that's always true
+    unless UNDERSTAT_SEASON itself is stale (season rolled over and nobody
+    updated it), in which case this is wrong too and both need bumping."""
+    override = os.environ.get("UNDERSTAT_CURRENT_SEASON")
+    if override:
+        return override
+    return str(int(get_understat_season()) + 1)
+
+
 def get_llm_api_key():
     generic = os.environ.get("FPL_PLANNER_LLM_API_KEY")
     if generic:
